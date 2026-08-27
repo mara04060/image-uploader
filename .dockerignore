@@ -1,0 +1,6 @@
+.venv
+venv
+Dockerfile
+images
+static
+.gitignore
