@@ -2,7 +2,6 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import re
 
-
 HOST = "0.0.0.0"
 PORT = 8000
 
@@ -39,6 +38,8 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers["Content-Length"])
         body = self.rfile.read(length)
         parts = body.split(b"--" + boundary)
+
+        file_saved = False
         for part in parts:
             if b'filename="' not in part:
                 continue
@@ -57,15 +58,21 @@ class Handler(SimpleHTTPRequestHandler):
                 errors="replace"
             )
 
-            data = data.rstrip(b"\r\n")
+            data = data.rstrip(b"\r\n--")  # Корректная очистка хвоста multipart
             filename = Path(filename).name
 
-            with open(UPLOAD_DIR / filename, "wb") as file:
-                file.write(data)
+            if filename:
+                UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+                with open(UPLOAD_DIR / filename, "wb") as file:
+                    file.write(data)
+                file_saved = True
 
-
-        self.send_response(200)
-        self.end_headers()
+        if file_saved:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"File uploaded successfully")
+        else:
+            self.send_error(400, "No file found in request")
 
 
 server = ThreadingHTTPServer(
