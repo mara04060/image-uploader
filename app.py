@@ -14,7 +14,7 @@ START_DIR = WEB_DIR / "static"
 UPLOAD_DIR = WEB_DIR / "images"
 LOG_FILE = LOG_DIR / "app.log"
 
-ALLOWED_EXTENSIONS = {".jpg", ".png", ".jpeg", ".gif"}
+ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
 
 logging.basicConfig(
@@ -51,13 +51,11 @@ def _parse_multipart_body(body: bytes, boundary: bytes) -> list[tuple[str, bytes
         if not part or part == b"--" or part.startswith(b"--\r\n"):
             continue
 
-        # Вконце потока идет двойной перевод строки, воспользуюсь этим
         header_body_split = part.find(b"\r\n\r\n")
         if header_body_split == -1:
             continue
 
         headers_raw = part[:header_body_split].decode("utf-8", errors="ignore")
-        # адаляю излишние переносытела файла (\r\n)
         data = part[header_body_split + 4:].rstrip(b"\r\n")
 
         # Это спасибо Макс подсказал.. реально работает...
@@ -82,7 +80,7 @@ def validate_file(original_name: str, data: bytes) -> str | None:
     file_extension = Path(original_name).suffix.lower()
 
     if file_extension not in ALLOWED_EXTENSIONS:
-        return f"Invalid file extension: {file_extension}. Allowed: {ALLOWED_EXTENSIONS}"
+        return f"IНепідтримуваний формат файлу: {file_extension}. доступны лише: {ALLOWED_EXTENSIONS}"
 
     if len(data) > MAX_FILE_SIZE:
         return f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB"
@@ -108,6 +106,8 @@ def json_responce(self, status, message, file_names=None):
     self.send_header("Content-Length", str(len(response_body)))
     self.end_headers()
     self.wfile.write(response_body)
+
+
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
