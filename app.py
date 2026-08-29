@@ -14,7 +14,7 @@ START_DIR = WEB_DIR / "static"
 UPLOAD_DIR = WEB_DIR / "images"
 LOG_FILE = LOG_DIR / "app.log"
 
-ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
+ALLOWED_EXTENSIONS = {".jpg", ".png", ".jpeg", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
 
 logging.basicConfig(
@@ -27,6 +27,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("AppLogger")
+
 
 
 def _read_body(handler) -> bytes:
@@ -96,10 +97,11 @@ def save_file(full_filename, data):
         file.write(data)
     logger.info(f"Saved {full_filename} ")
 
-def json_responce(self, status, message):
+def json_responce(self, status, message, file_names=None):
     response_data = {
         "status": status,
-        "message": message
+        "message": message,
+        "file": file_names
     }
     self.send_response(status)
     self.send_header("Content-type", "application/json")
@@ -114,7 +116,10 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(START_DIR),**kwargs)
 
     def do_POST(self):
-        global error_message
+        error_message = None
+        file_name_error = None
+        file_names:set = []
+
         if self.path != "/upload":
             logger.warning(f"Bad route {self.path}")
             self.send_error(404)
@@ -126,20 +131,23 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         for file_name, data in files:
+            extension = Path(file_name).suffix.lower()
             error_message = validate_file(file_name, data)
+            file_name =  uuid.uuid4().hex + extension
             if error_message:
                 logger.warning(f"Rejected file '{file_name}': {error_message}")
+                file_name_error = file_name
             else:
                 logger.info(f"file name = {file_name} --> start downloading")
                 save_file(file_name, data)
                 logger.info(f"File {file_name}  downloaded!")
+                file_names.append(file_name)
 
         if not error_message :
-            json_responce(self, 200, "Files is downloaded")
+            json_responce(self, 200, "Files is downloaded", file_names)
         else:
-            json_responce(self,400, error_message)
-
+            json_responce(self,400, error_message, file_name_error)
 
 server = ThreadingHTTPServer((HOST, PORT), Handler)
-logger.info(f"Python server started on http://localhost:{PORT}")
+logger.info(f"Python server started on http://localhost:8080/")
 server.serve_forever()
