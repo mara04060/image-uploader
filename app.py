@@ -65,7 +65,6 @@ def _parse_multipart_body(body: bytes, boundary: bytes) -> list[tuple[str, bytes
         if filename_match and data:
             filename = filename_match.group(1)
             extracted_files.append((filename, data))
-
     return extracted_files
 
 def extract_file_data(handler) -> list[tuple[str, bytes]]:
@@ -131,9 +130,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         for file_name, data in files:
-            extension = Path(file_name).suffix.lower()
             error_message = validate_file(file_name, data)
-            file_name =  uuid.uuid4().hex + extension
+            file_name = Path(file_name).stem + "_"+ uuid.uuid4().hex + Path(file_name).suffix.lower()
             if error_message:
                 logger.warning(f"Rejected file '{file_name}': {error_message}")
                 file_name_error = file_name
