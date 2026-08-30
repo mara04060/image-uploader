@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = document.createElement('div');
             list.id = 'file-list';
 
+
             storedFiles.forEach((fileData, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-list-item';
