@@ -1,6 +1,7 @@
 .venv
 venv
 Dockerfile
-images
-static
 .gitignore
+Image Upload API.postman_collection.json
+README.md
+requirements.txt

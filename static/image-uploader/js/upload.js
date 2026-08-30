@@ -2,7 +2,6 @@ document.addEventListener('DOMContentLoaded', function () {
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' || event.key === 'F5') {
             event.preventDefault();
-
             sessionStorage.removeItem('pageWasVisited');
             window.location.href = '../index.html';
         }
@@ -19,8 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const updateTabStyles = () => {
         const uploadTab = document.getElementById('upload-tab-btn');
         const imagesTab = document.getElementById('images-tab-btn');
-        const storedFiles = JSON.parse(localStorage.getItem('uploadedImages')) || [];
-
         const isImagesPage = window.location.pathname.includes('images.html');
 
         uploadTab.classList.remove('upload__tab--active');
@@ -33,71 +30,96 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Вспомогательная функция для чтения файла в DataURL через Promise
+    const readFileAsDataURL = (file) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (event) => resolve(event.target.result);
+            reader.onerror = (error) => reject(error);
+            reader.readAsDataURL(file);
+        });
+    };
+
     const handleAndStoreFiles = async (files) => {
         if (!files || files.length === 0) {
             return;
         }
 
-        const storedFiles = JSON.parse(localStorage.getItem('uploadedImages')) || [];
         const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
         const MAX_SIZE_MB = 5;
         const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
 
-        let filesAdded = false;
-        let lastFileName = '';
-
         const formData = new FormData();
+        const validFiles = [];
 
-        // Массив только названий файлов
-        const fileNames = [];
-
+        // 1. Фильтруем файлы и наполняем FormData
         for (const file of files) {
             if (!allowedTypes.includes(file.type) || file.size > MAX_SIZE_BYTES) {
+                console.warn(`File rejected: ${file.name}`);
                 continue;
             }
-
-            const reader = new FileReader();
-
-            reader.onload = (event) => {
-                const fileData = {
-                    name: file.name,
-                    url: event.target.result
-                };
-
-                storedFiles.push(fileData);
-                localStorage.setItem('uploadedImages', JSON.stringify(storedFiles));
-                updateTabStyles();
-            };
-            reader.readAsDataURL(file);
-            fileNames.push(file.name);
             formData.append('files', file);
-
-            filesAdded = true;
-            lastFileName = file.name;
+            validFiles.push(file);
         }
-        formData.append('names', JSON.stringify(fileNames));
-        console.log('Names JSON:', formData);
+
+        if (validFiles.length === 0) {
+            alert("Максимальний розмір завантажуваного зображення — 5 МБ");
+            return;
+        }
+
         try {
+            // 2. Отправка данных на сервер
             const response = await fetch('/upload', {
                 method: 'POST',
                 body: formData
             });
 
-            if (!response.ok) {
-                console.error('Upload failed:', response.status);
+            // Парсим JSON-ответ от сервера
+            const resultData = await response.json();
+            console.log('Server response:', resultData);
+
+            if (!response.ok || resultData.status === 'Error') {
+                console.error('Upload failed:', resultData.message);
+                alert(`Error: ${resultData.message || 'Files upload failed'}`);
                 return;
             }
 
-            console.log('Files uploaded successfully');
+            // 3. Получаем массив уникальных имен файлов от сервера (resultData.file)
+            const serverFileNames = resultData.file || [];
+            const storedFiles = JSON.parse(localStorage.getItem('uploadedImages')) || [];
+            let lastServerFileName = '';
+
+            // Проходим по каждому файлу и связываем его с уникальным именем от сервера
+            for (let i = 0; i < validFiles.length; i++) {
+                const file = validFiles[i];
+                // Берем уникальное имя, которое прислал сервер для этого файла
+                const uniqueFileName = serverFileNames[i] || file.name;
+
+                const fileDataUrl = await readFileAsDataURL(file);
+
+                const fileData = {
+                    name: uniqueFileName, // Сохраняем уникальное имя в localStorage
+                    url: fileDataUrl
+                };
+
+                storedFiles.push(fileData);
+                lastServerFileName = uniqueFileName;
+            }
+
+            // Сохраняем обновленный массив в localStorage
+            localStorage.setItem('uploadedImages', JSON.stringify(storedFiles));
+            updateTabStyles();
+
+            // 4. Подставляем ссылку на последний загруженный файл с учетом NGINX (порт 8080)
+            if (currentUploadInput && lastServerFileName) {
+                currentUploadInput.value = `http://localhost:8080/images/${lastServerFileName}`;
+            }
+
+            alert(`${resultData.message || 'Files uploaded successfully!'}`);
 
         } catch (error) {
-            console.error('Upload error:', error);
-        }
-        if (filesAdded) {
-            if (currentUploadInput) {
-                currentUploadInput.value = `https://sharefile.xyz/${lastFileName}`;
-            }
-            alert("Files selected successfully! Go to the 'Images' tab to view them.");
+            console.error('Upload network or parsing error:', error);
+            alert("Error: Failed to connect to the server.");
         }
     };
 
@@ -108,7 +130,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (textToCopy && textToCopy !== 'https://') {
                 navigator.clipboard.writeText(textToCopy).then(() => {
                     copyButton.textContent = 'COPIED!';
-
                     setTimeout(() => {
                         copyButton.textContent = 'COPY';
                     }, 2000);
