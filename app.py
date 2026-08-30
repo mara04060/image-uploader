@@ -17,6 +17,9 @@ LOG_FILE = LOG_DIR / "app.log"
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
 
+MESSAGE_OK = ""
+MESSAGE_ERROR_ = ""
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -75,9 +78,9 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
     return _parse_multipart_body(body, boundary)
 
 
-def validate_file(original_name: str, data: bytes) -> str | None:
+def validate_file(file_name: str, data: bytes) -> str | None:
     #TODO вынести все сообщения как исключения. Пока долго заморачиваться
-    file_extension = Path(original_name).suffix.lower()
+    file_extension = Path(file_name).suffix.lower()
 
     if file_extension not in ALLOWED_EXTENSIONS:
         return f"IНепідтримуваний формат файлу: {file_extension}. доступны лише: {ALLOWED_EXTENSIONS}"
@@ -114,6 +117,7 @@ class Handler(SimpleHTTPRequestHandler):
         # logger.info(f"Welcome => {HOST} : {PORT} /? ars = {args} and kwargs ={kwargs}")
         super().__init__(*args, directory=str(START_DIR),**kwargs)
 
+
     def do_POST(self):
         error_message = None
         file_name_error = None
@@ -142,7 +146,7 @@ class Handler(SimpleHTTPRequestHandler):
                 file_names.append(file_name)
 
         if not error_message :
-            json_responce(self, 200, "Files is downloaded", file_names)
+            json_responce(self, 200, "Файли успішно завантажені", file_names)
         else:
             json_responce(self,400, error_message, file_name_error)
 
