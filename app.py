@@ -17,8 +17,6 @@ LOG_FILE = LOG_DIR / "app.log"
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
 
-MESSAGE_OK = ""
-MESSAGE_ERROR_ = ""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,7 +42,7 @@ def _extract_boundary(content_type: str) -> bytes:
     logger.warning(f"Could not extract boundary from {content_type}")
     return b""
 
-#    TODO изменить тут все по людски ибо не нравиться но на переиспользование НЕ годиться посмотреть как в нормальных фреймворках делают
+#    TODO изменить тут все по людски ибо не нравиться  на переиспользование НЕ годиться посмотреть как в нормальных фреймворках делают
 def _parse_multipart_body(body: bytes, boundary: bytes) -> list[tuple[str, bytes]]:
     parts = body.split(b"--" + boundary)
     extracted_files = []
