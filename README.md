@@ -144,6 +144,7 @@ curl -X POST \
 У полі `file` знаходиться ім'я збереженого файлу. (Яке повертаэться у фронт)
 
 Як варіант  -можливо завантажити де-кілька файлів дозволених форматов та розміру.
+(Примітка: Якщо 1 файл з завантажуємих не відповідає вимогам - ресурс видає 400 помилку.)
 Приклад:
 ```json
 {
@@ -300,16 +301,16 @@ GID=1000
 
 1. Імпортувати колекцію в Postman.
 2. Виконати `POST /upload`.
-3. Вибрати файл(и) для завантаження.
+3. Вибрати файл(и) для завантаження.(Завантажуэться на Body / form-data поле file )
 4. Після успішного запиту ім'я файлу автоматично зберігається у змінну:
 
    ```text
-   uploadedFile
+   filename
    ```
 5. Виконати:
 
    ```http
-   GET {{baseUrl}}/images/{{uploadedFile}}
+   GET {{baseUrl}}/images/{{filename}}
    ```
 
 Змінна:
@@ -337,7 +338,7 @@ if (Array.isArray(response.file) && response.file.length > 0) {
 Після виконання POST змінна:
 
 ```text
-uploadedFile
+filename
 ```
 
 містить, наприклад:
@@ -350,7 +351,7 @@ sample-birch-400x300_d177807bc3c04b47ba442bc50afe33dd.jpg
 Наступний GET:
 
 ```http
-GET {{baseUrl}}/images/{{uploadedFile}}
+GET {{baseUrl}}/images/{{filename}}
 ```
 
 автоматично сформує URL:
