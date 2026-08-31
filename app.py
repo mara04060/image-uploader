@@ -74,13 +74,13 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
     body = _read_body(handler)
     return _parse_multipart_body(body, boundary)
 
-def validate_files(files:list[tuple[str, bytes]]):
+def validate_files(self, files:list[tuple[str, bytes]]):
     for file_name, data in files:
         error_message = validate_file(file_name, data)
         file_name = Path(file_name).stem + "_" + uuid.uuid4().hex + Path(file_name).suffix.lower()
         if error_message:
             logger.warning(f"Rejected file '{file_name}': {error_message}")
-            json_responce(400, error_message, file_name)
+            json_responce(self,400, error_message, file_name)
             return False
     return True
 
@@ -134,17 +134,16 @@ class Handler(SimpleHTTPRequestHandler):
 
         files = extract_file_data(self)
         if not files:
-            json_responce(self,00, "No files provided")
+            json_responce(self,500, "No files provided")
             return
 
-        if not validate_files(files):
+        if validate_files(self, files):
             for file_name, data in files:
                 logger.info(f"file name = {file_name} --> start downloading")
                 save_file(file_name, data)
                 logger.info(f"File {file_name}  downloaded!")
                 file_names.append(file_name)
-
-        json_responce(self, 200, "Файли успішно завантажені", file_names)
+            json_responce(self, 200, "Файли успішно завантажені", file_names)
 
 server = ThreadingHTTPServer((HOST, PORT), Handler)
 logger.info(f"Python server started on http://localhost:8080/")
