@@ -17,9 +17,6 @@ LOG_FILE = LOG_DIR / "app.log"
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
 
-MESSAGE_OK = ""
-MESSAGE_ERROR_ = ""
-
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -77,6 +74,15 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
     body = _read_body(handler)
     return _parse_multipart_body(body, boundary)
 
+def validate_files(files:list[tuple[str, bytes]]):
+    for file_name, data in files:
+        error_message = validate_file(file_name, data)
+        file_name = Path(file_name).stem + "_" + uuid.uuid4().hex + Path(file_name).suffix.lower()
+        if error_message:
+            logger.warning(f"Rejected file '{file_name}': {error_message}")
+            json_responce(400, error_message, file_name)
+            return False
+    return True
 
 def validate_file(file_name: str, data: bytes) -> str | None:
     #TODO вынести все сообщения как исключения. Пока долго заморачиваться
@@ -119,8 +125,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 
     def do_POST(self):
-        error_message = None
-        file_name_error = None
         file_names:set = []
 
         if self.path != "/upload":
@@ -133,22 +137,14 @@ class Handler(SimpleHTTPRequestHandler):
             json_responce(self,00, "No files provided")
             return
 
-        for file_name, data in files:
-            error_message = validate_file(file_name, data)
-            file_name = Path(file_name).stem + "_"+ uuid.uuid4().hex + Path(file_name).suffix.lower()
-            if error_message:
-                logger.warning(f"Rejected file '{file_name}': {error_message}")
-                file_name_error = file_name
-            else:
+        if not validate_files(files):
+            for file_name, data in files:
                 logger.info(f"file name = {file_name} --> start downloading")
                 save_file(file_name, data)
                 logger.info(f"File {file_name}  downloaded!")
                 file_names.append(file_name)
 
-        if not error_message :
-            json_responce(self, 200, "Файли успішно завантажені", file_names)
-        else:
-            json_responce(self,400, error_message, file_name_error)
+        json_responce(self, 200, "Файли успішно завантажені", file_names)
 
 server = ThreadingHTTPServer((HOST, PORT), Handler)
 logger.info(f"Python server started on http://localhost:8080/")
