@@ -115,10 +115,7 @@ def _parse_multipart_body( body: bytes, boundary: bytes) -> list[tuple[str, byte
 
 def extract_file_data(handler) -> list[tuple[str, bytes]]:
     content_type = handler.headers.get("Content-Type","" )
-    boundary = _extract_boundary(content_type)
-    body = _read_body(handler)
-    files = _parse_multipart_body( body, boundary )
-
+    files = _parse_multipart_body( _read_body(handler), _extract_boundary(content_type) )
     if not files:
         raise NoFilesError("No files provided")
     return files
@@ -132,11 +129,21 @@ def validate_file(file_name: str, data: bytes) -> None:
             )
 
     if len(data) > MAX_FILE_SIZE:
-        raise FileTooLargeError( ( "File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" ), file_name=file_name )
+        raise FileTooLargeError( ( "File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" ),
+                                 file_name=file_name )
+
+def validate_files(files):
+    try:
+        for file_name, data in files:
+            logger.info(f"Validating file '{file_name}'")
+            validate_file(file_name, data)
+    except (InvalidFileTypeError) as e:
+        logger.warning(f"")
 
 def generate_filename(  original_name: str) -> str:
     path = Path(original_name)
     return (f"{path.stem} {uuid.uuid4().hex} {path.suffix.lower()}" )
+
 
 def save_file( file_name: str, data: bytes) -> None:
     try:
@@ -178,9 +185,6 @@ class Handler(SimpleHTTPRequestHandler):
 
         try:
             files = extract_file_data(self)
-            for file_name, data in files:
-                logger.info( f"Validating file '{file_name}'" )
-                validate_file(file_name, data)
 
             uploaded_files = []
 
@@ -189,7 +193,6 @@ class Handler(SimpleHTTPRequestHandler):
                 logger.info(f"Starting upload: '{file_name}' -> '{new_file_name}'")
                 save_file(new_file_name,data)
                 uploaded_files.append(new_file_name)
-
             json_response(self,200,"Файли успішно завантажені",uploaded_files)
 
         except UploadError as error:
