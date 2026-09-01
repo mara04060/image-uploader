@@ -97,6 +97,11 @@ def validate_file(file_name: str, data: bytes) -> str | None:
     # Тут еще может что надо в будующем валидировать как-бы в обьект не перерасло
     return None
 
+def _generate_unique_filename(file_name: str) -> str:
+    safe_name = Path(file_name).name
+    path = Path(safe_name)
+    return f"{path.stem}_{uuid.uuid4().hex}{path.suffix.lower()}"
+
 def save_file(full_filename, data):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with open(UPLOAD_DIR / full_filename, "wb") as file:
@@ -140,10 +145,11 @@ class Handler(SimpleHTTPRequestHandler):
         if validate_files(self, files):
             for file_name, data in files:
                 logger.info(f"file name = {file_name} --> start downloading")
-                save_file(file_name, data)
-                logger.info(f"File {file_name}  downloaded!")
-                file_names.append(file_name)
-            json_responce(self, 200, "Файли успішно завантажені", file_names)
+                file_name_new = _generate_unique_filename(file_name)
+                save_file(file_name_new, data)
+                logger.info(f"File {file_name_new}  downloaded!")
+                file_names.append(file_name_new)
+            json_responce(self, 200, "Файли успішно завантажені", file_name_new)
 
 server = ThreadingHTTPServer((HOST, PORT), Handler)
 logger.info(f"Python server started on http://localhost:8080/")
