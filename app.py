@@ -1,10 +1,10 @@
 import json
 import logging
+import re
 import uuid
+from functools import wraps
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-import re
-
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -18,7 +18,6 @@ LOG_FILE = LOG_DIR / "app.log"
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
-# Вдруг директорию забіли создать
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -27,189 +26,315 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler()
-    ]
+        logging.StreamHandler(),
+    ],
 )
-
 logger = logging.getLogger("AppLogger")
 
 
-
-# Exceptions
-class UploadError(Exception):
-    def __init__(
-        self,
-        message: str,
-        file_name: str | None = None,
-        status_code: int = 400
-    ):
-        super().__init__(message)
-
-        self.message = message
-        self.file_name = file_name
-        self.status_code = status_code
-
-# Files not found
-class NoFilesError(UploadError):
-    pass
-
-# Not in ALLOWED_EXTENSIONS
-class InvalidFileTypeError(UploadError):
-    pass
-
-# Limit max size
-class FileTooLargeError(UploadError):
-    pass
-
-# Error save file
-class FileSaveError(UploadError):
-    def __init__(self, message: str, file_name: str):
-        super().__init__(
-            message=message,
-            file_name=file_name,
-            status_code=500
-        )
-
-# Error parsing multi-form
-class MultipartError(UploadError):
+# Custom exceptions
+class AppError(Exception):
     pass
 
 
+class RequestError(AppError):
+    pass
 
-def _read_body(handler) -> bytes:
-    length = int(handler.headers.get("Content-Length", 0))
-    return handler.rfile.read(length)
+
+class MultipartError(RequestError):
+    pass
+
+
+class FileValidationError(AppError):
+    pass
+
+
+class FileSaveError(AppError):
+    pass
+
+
+# Request helpers
+def _read_body(handler):
+    content_length = handler.headers.get("Content-Length")
+    if content_length is None:
+        raise RequestError("Content-Length header is missing")
+
+    try:
+        length = int(content_length)
+    except ValueError as e:
+        raise RequestError("Invalid Content-Length header") from e
+
+    if length < 0:
+        raise RequestError("Invalid Content-Length value")
+
+    if length > MAX_FILE_SIZE:
+        raise RequestError(f"Request is too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB")
+
+    try:
+        return handler.rfile.read(length)
+    except OSError as e:
+        raise RequestError("Failed to read request body") from e
 
 
 def _extract_boundary(content_type: str) -> bytes:
-    match = re.search(
-        r'boundary="?([^";]+)"?',
-        content_type
-    )
+    if not content_type:
+        raise MultipartError("Content-Type header is missing")
+
+    match = re.search(r'boundary="?([^";]+)"?', content_type, re.IGNORECASE,)
 
     if not match:
-        raise MultipartError("Could not extract multipart boundary")
-    return match.group(1).encode()
+        raise MultipartError("Multipart boundary was not found" )
+    return match.group(1).encode("utf-8")
 
 
-def _parse_multipart_body( body: bytes, boundary: bytes) -> list[tuple[str, bytes]]:
-    parts = body.split(b"--" + boundary)
-    extracted_files = []
+# Multipart processing
+def _find_multipart_parts( body: bytes, boundary: bytes,):
+    # Content - Type: multipart / form - data;
+    # boundary = ----WebKitFormBoundaryABC123
+
+    #Парсинг условно на части
+    # boundary = b"----WebKitFormBoundaryABC123"
+    # marker = b"--" + boundary
+
+    # ------WebKitFormBoundaryABC123\r\n
+    # Content - Disposition: form - data;
+    # name = "file";
+    # filename = "photo.jpg"\r\n
+    # Content - Type: image / jpeg\r\n
+    # \r\n
+    # [БАЙТЫ JPEG - ФАЙЛА]
+    # \r\n
+    # ------WebKitFormBoundaryABC123\r\n
+    # Content - Disposition: form - data;
+    # name = "file";
+    # filename = "image.png"\r\n
+    # Content - Type: image / png\r\n
+    # \r\n
+    # [БАЙТЫ PNG - ФАЙЛА]
+    # \r\n
+    # ------WebKitFormBoundaryABC123 - -\r\n(Запрос закончился)
+
+    marker = b"--" + boundary
+    parts: list[bytes] = []
+    position = 0
+
+    while True:
+        boundary_start = body.find(marker, position)
+        if boundary_start == -1:
+            break
+
+        part_start = boundary_start + len(marker)
+
+        # Final boundary: --boundary--
+        if body[part_start:part_start + 2] == b"--":
+            break
+
+        # Normal boundary must be followed by CRLF.(to be continue...
+        if body[part_start:part_start + 2] == b"\r\n":
+            part_start += 2
+
+        next_boundary = body.find(marker, part_start)
+        if next_boundary == -1:
+            raise MultipartError("Multipart body has an incomplete boundary")
+        part = body[part_start:next_boundary]
+
+        if part.endswith(b"\r\n"):
+            part = part[:-2]
+
+        if part:
+            parts.append(part)
+        position = next_boundary
+
+    if not parts:
+        raise MultipartError("No multipart parts found")
+    return parts
+
+
+def _extract_file_from_part(part: bytes,):
+    separator = b"\r\n\r\n"
+    header_end = part.find(separator)
+
+    if header_end == -1:
+        raise MultipartError("Multipart part has invalid headers")
+
+    headers_raw = part[:header_end].decode("utf-8", errors="replace",)
+    file_body = part[header_end + len(separator):]
+    filename_match = re.search(r'filename="([^"]*)"', headers_raw, re.IGNORECASE,)
+
+    if not filename_match:
+        return None
+
+    filename = filename_match.group(1).strip()
+    if not filename:
+        raise MultipartError("Uploaded file has an empty filename")
+
+    if not file_body:
+        raise FileValidationError(f"Uploaded file '{filename}' is empty")
+    return filename, file_body
+
+
+def _parse_multipart_body(body: bytes,boundary: bytes,):
+    parts = _find_multipart_parts(body, boundary)
+    files: list[tuple[str, bytes]] = []
 
     for part in parts:
-        if not part or part == b"--"  or part.startswith(b"--\r\n"):
-            continue
+        file_data = _extract_file_from_part(part)
 
-        header_body_split = part.find(b"\r\n\r\n")
-        if header_body_split == -1:
-            continue
+        if file_data is not None:
+            files.append(file_data)
 
-        headers_raw = part[:header_body_split].decode("utf-8",errors="ignore" )
-        data = part[ header_body_split + 4:].rstrip(b"\r\n")
-        filename_match = re.search( r'filename="([^"]+)"', headers_raw )
-
-        if filename_match and data:
-            filename = filename_match.group(1)
-            extracted_files.append((filename, data) )
-    return extracted_files
-
-def extract_file_data(handler) -> list[tuple[str, bytes]]:
-    content_type = handler.headers.get("Content-Type","" )
-    files = _parse_multipart_body( _read_body(handler), _extract_boundary(content_type) )
     if not files:
-        raise NoFilesError("No files provided")
+        raise RequestError("No files provided")
     return files
 
-def validate_file(file_name: str, data: bytes) -> None:
-    file_extension = Path(file_name).suffix.lower()
-    if file_extension not in ALLOWED_EXTENSIONS:
-        raise InvalidFileTypeError(
-            f"Непідтримуваний формат файлу: {file_extension}. Доступні лише: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
-            file_name=file_name
-            )
+
+def extract_file_data(handler) -> list[tuple[str, bytes]]:
+    content_type = handler.headers.get("Content-Type", "")
+    boundary = _extract_boundary(content_type)
+    body = _read_body(handler)
+    return _parse_multipart_body(body, boundary)
+
+
+# File validation
+def validate_file(file_name: str,data: bytes,) -> None:
+    safe_name = Path(file_name).name
+    extension = Path(safe_name).suffix.lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise FileValidationError(f"Непідтримуваний формат файлу: {extension or '<none>'}. Доступні: {allowed}" )
 
     if len(data) > MAX_FILE_SIZE:
-        raise FileTooLargeError( ( "File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" ),
-                                 file_name=file_name )
-
-def validate_files(files):
-    try:
-        for file_name, data in files:
-            logger.info(f"Validating file '{file_name}'")
-            validate_file(file_name, data)
-    except (InvalidFileTypeError) as e:
-        logger.warning(f"")
-
-def generate_filename(  original_name: str) -> str:
-    path = Path(original_name)
-    return (f"{path.stem} {uuid.uuid4().hex} {path.suffix.lower()}" )
+        raise FileValidationError(f"File '{safe_name}' is too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
 
 
-def save_file( file_name: str, data: bytes) -> None:
-    try:
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True )
-        file_path = UPLOAD_DIR / file_name
-        with open(file_path, "wb") as file:
-            file.write(data)
-    except OSError as error:
-        raise FileSaveError(f"Could not save file: {error}",file_name=file_name ) from error
-    logger.info(
-        f"File '{file_name}' successfully saved"
-    )
+def _generate_unique_filename(file_name: str) -> str:
+    safe_name = Path(file_name).name
+    path = Path(safe_name)
+    return (f"{path.stem}_{uuid.uuid4().hex}{path.suffix.lower()}" )
 
-def json_response(handler, status: int, message: str, file_names=None) -> None:
-    response_data = {
-        "status": status,
-        "message": message,
-        "file": file_names
-    }
 
-    response_body = json.dumps( response_data, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type","application/json; charset=utf-8" )
-    handler.send_header("Content-Length",str(len(response_body)))
-    handler.end_headers()
-    handler.wfile.write(response_body)
+def validate_files( files,):
+    validated_files = []
+    for file_name, data in files:
+        validate_file(file_name, data)
+        unique_name = _generate_unique_filename(file_name)
+        validated_files.append((unique_name, data))
+    return validated_files
 
-class Handler(SimpleHTTPRequestHandler):
+def validate_uploaded_files(func):
+    @wraps(func)
+    def wrapper(handler):
+        files = extract_file_data(handler)
+        validated_files = validate_files(files)
+        return func(handler, validated_files)
+    return wrapper
 
-    def __init__(self, *args, **kwargs):
-        super().__init__( *args,directory=str(START_DIR),**kwargs)
 
-    def do_POST(self):
-
-        if self.path != "/upload":
-            logger.warning( f"Bad route {self.path}")
-            self.send_error(404)
-            return
-
+def handle_upload_errors(func):
+    @wraps(func)
+    def wrapper(handler):
         try:
-            files = extract_file_data(self)
+            return func(handler)
 
-            uploaded_files = []
+        except FileValidationError as e:
+            logger.warning("File validation failed: %s",e,)
+            json_response(handler,400,str(e),)
 
-            for file_name, data in files:
-                new_file_name = generate_filename(file_name )
-                logger.info(f"Starting upload: '{file_name}' -> '{new_file_name}'")
-                save_file(new_file_name,data)
-                uploaded_files.append(new_file_name)
-            json_response(self,200,"Файли успішно завантажені",uploaded_files)
+        except MultipartError as e:
+            logger.warning("Multipart processing failed: %s",e, )
+            json_response(handler,400,str(e),)
 
-        except UploadError as error:
-            logger.warning(
-                f"Upload error"
-                f"{f' for {error.file_name}' if error.file_name else ''}: "
-                f"{error.message}"
-            )
+        except RequestError as e:
+            logger.warning("Request error: %s",e,)
+            json_response(handler,400,str(e),)
 
-            json_response(self,error.status_code,error.message,error.file_name)
+        except FileSaveError as e:
+            logger.error("File save error: %s",e,)
+            json_response(handler,500,str(e),)
 
         except Exception:
             logger.exception("Unexpected server error")
+            json_response(handler,500,"Internal server error",)
+    return wrapper
 
-            json_response(self,500,"Internal server error")
+
+# File saving
+def save_file(file_name: str,data: bytes,):
+    try:
+        UPLOAD_DIR.mkdir(parents=True,exist_ok=True,)
+        file_path = UPLOAD_DIR / Path(file_name).name
+        with file_path.open("wb") as file:
+            file.write(data)
+
+    except OSError as e:
+        logger.exception("Failed to save file '%s'",file_name,)
+        raise FileSaveError(f"Failed to save file '{file_name}'") from e
+
+    logger.info("Saved file '%s'",file_name,)
 
 
-server = ThreadingHTTPServer((HOST, PORT), Handler)
-logger.info(f"Python server started on http://localhost:8080/")
-server.serve_forever()
+# HTTP response
+def json_response(handler,status: int,message: str,file_names,):
+    response_data = {"status": status,"message": message,"file": file_names,}
+    try:
+        response_body = json.dumps(response_data,ensure_ascii=False,).encode("utf-8")
+        handler.send_response(status)
+        handler.send_header("Content-Type","application/json; charset=utf-8",)
+        handler.send_header("Content-Length",str(len(response_body)),)
+        handler.end_headers()
+        handler.wfile.write(response_body)
+
+    except OSError:
+        logger.exception("Failed to send HTTP response")
+
+
+# Upload processing
+@handle_upload_errors
+@validate_uploaded_files
+def upload_files(handler, files,):
+    file_names: list[str] = []
+
+    for file_name, data in files:
+        logger.info("Starting upload of '%s'",file_name,)
+        save_file(file_name, data)
+        file_names.append(file_name)
+        logger.info("File '%s' uploaded successfully",file_name,)
+
+    json_response(handler,200,"Файли успішно завантажені", file_names,)
+
+
+# HTTP Handler
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__( *args, directory=str(START_DIR),**kwargs,)
+
+    def do_POST(self):
+        if self.path != "/upload":
+            logger.warning("Unknown route: %s",self.path,)
+            self.send_error(404)
+            return
+        upload_files(self)
+
+
+# Server
+def create_server() -> ThreadingHTTPServer:
+    try:
+        return ThreadingHTTPServer((HOST, PORT), Handler,)
+    except OSError as e:
+        logger.exception("Failed to start server on %s:%s",HOST, PORT,)
+        raise AppError(f"Failed to start server on {HOST}:{PORT}") from e
+
+def main():
+    server = create_server()
+    logger.info("Python server started on http://localhost:%s/",PORT,)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    finally:
+        server.server_close()
+
+if __name__ == "__main__":
+    main()
