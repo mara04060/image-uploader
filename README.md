@@ -345,15 +345,14 @@ baseUrl = http://localhost:8080
 
 У `POST /upload` використовується Post-response script:
 
-```javascript
-const response = pm.response.json();
-
-if (Array.isArray(response.file) && response.file.length > 0) {
-    pm.variables.set("uploadedFile", response.file[0]);
-
-    console.log("Uploaded file:", response.file[0]);
-}
+```python
+def _generate_unique_filename(file_name: str) -> str:
+    safe_name = Path(file_name).name
+    path = Path(safe_name)
+    return f"{path.stem}_{uuid.uuid4().hex}{path.suffix.lower()}"
 ```
+Частина назви файлу залишаэться, але інша додаэ випадкове значення UUID v4
+
 
 Після виконання POST змінна:
 
