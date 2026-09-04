@@ -381,7 +381,7 @@ http://localhost:8080/images/sample-birch-400x300_d177807bc3c04b47ba442bc50afe33
 
 ---
 
-# 10. Основні команди
+# 9. Основні команди
 
 ```bash
 # Збірка
