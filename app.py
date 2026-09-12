@@ -275,7 +275,7 @@ def save_file(file_name: str,data: bytes,):
 
 
 # HTTP response
-def json_response(handler,status: int,message: str,file_names,):
+def json_response(handler,status: int,message: str,file_names=None):
     response_data = {"status": status,"message": message,"file": file_names,}
     try:
         response_body = json.dumps(response_data,ensure_ascii=False,).encode("utf-8")
@@ -310,7 +310,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__( *args, directory=str(START_DIR),**kwargs,)
 
     def do_POST(self):
-        if (self.path != "/upload") & (self.path != "/upload/"):
+        if (self.path != "/upload"):
             logger.warning("Unknown route: %s",self.path,)
             self.send_error(404)
             return
