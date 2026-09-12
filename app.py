@@ -310,7 +310,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__( *args, directory=str(START_DIR),**kwargs,)
 
     def do_POST(self):
-        if self.path != "/upload":
+        if (self.path != "/upload") & (self.path != "/upload/"):
             logger.warning("Unknown route: %s",self.path,)
             self.send_error(404)
             return
