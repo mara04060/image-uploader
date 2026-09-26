@@ -4,6 +4,9 @@ import uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import re
+import psycopg
+from psycopg import Connection
+import time
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -13,6 +16,13 @@ LOG_DIR = WEB_DIR / "logs"
 START_DIR = WEB_DIR / "static"
 UPLOAD_DIR = WEB_DIR / "images"
 LOG_FILE = LOG_DIR / "app.log"
+
+DB_HOST = "db"
+DB_PORT = 5432
+DB_SCHEME = "public"
+DB_NAME = "images_db"
+DB_USER = "root_user"
+DB_PASSWORD = "passw123"
 
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * 5
@@ -28,6 +38,63 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AppLogger")
 
+def create_table(connection: Connection):
+    with connection.cursor() as cursor:
+        cursor.execute(
+        f"""     
+        CREATE TABLE IF NOT EXISTS {DB_SCHEME}.images (
+          id SERIAL PRIMARY KEY,
+          filename TEXT NOT NULL,
+          original_name TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          file_type TEXT NOT NULL
+      );
+        """
+        )
+        connection.commit()
+    logger.info("Database table is ready!")
+
+def insert_image(connection: Connection, file_name: str, original_name: str, size: int, file_type: str):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO public.images (
+                filename,
+                original_name,
+                size,
+                file_type
+            )
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (file_name, original_name, size, file_type)
+        )
+        connection.commit()
+        logger.info(f"Insert data {file_name}, {original_name}, {size} , {file_type}")
+        return cursor.fetchone()[0]
+
+def get_images(connection: Connection, page: int = 1):
+    offset = (page -1 ) * 10
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT * FROM public.images OFFSET %s LIMIT 10;",
+            (offset, )
+        )
+        data_all = cursor.fetchall()
+        connection.commit()
+    logger.info("Select Data ", data_all )
+    return data_all
+
+def del_image(connection: Connection, image_id : int):
+    with connection.cursor() as cursor:
+        if image_id > 0:
+            cursor.execute(
+                "DELETE  FROM public.images WHERE id = %s;",
+                (image_id,)
+            )
+            connection.commit()
+    logger.info(f"Delete image id = %s", image_id)
 
 
 def _read_body(handler) -> bytes:
@@ -84,7 +151,7 @@ def validate_files(self, files:list[tuple[str, bytes]]):
             return False
     return True
 
-def validate_file(file_name: str, data: bytes) -> str | None:
+def validate_file(file_name: str, data: bytes) ->  str | None:
     #TODO вынести все сообщения как исключения. Пока долго заморачиваться
     file_extension = Path(file_name).suffix.lower()
 
@@ -94,13 +161,13 @@ def validate_file(file_name: str, data: bytes) -> str | None:
     if len(data) > MAX_FILE_SIZE:
         return f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB"
 
-    # Тут еще может что надо в будующем валидировать как-бы в обьект не перерасло
     return None
 
 def _generate_unique_filename(file_name: str) -> str:
     safe_name = Path(file_name).name
+    ext = Path(file_name).suffix.lower()
     path = Path(safe_name)
-    return f"{path.stem}_{uuid.uuid4().hex}{path.suffix.lower()}"
+    return f"{path.stem}_{uuid.uuid4().hex}{ext}"
 
 def save_file(full_filename, data):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,9 +214,27 @@ class Handler(SimpleHTTPRequestHandler):
                 logger.info(f"file name = {file_name} --> start downloading")
                 file_name_new = _generate_unique_filename(file_name)
                 save_file(file_name_new, data)
+                file_extension = Path(file_name_new).suffix.lower()
+                insert_image(connection, file_name_new, file_name, len(data), file_extension)
                 logger.info(f"File {file_name_new}  downloaded!")
                 file_names.append(file_name_new)
-            json_responce(self, 200, "Файли успішно завантажені", file_name_new)
+            json_responce(self, 200, "Файли успішно завантажені", [file_name_new])
+
+connection = None
+while not connection:
+    try:
+        connection = psycopg.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+        )
+        create_table(connection)
+    except psycopg.Error as e:
+        logger.warning(f"Could not connect to database: {e}")
+        connection = None
+        time.sleep(1)
 
 server = ThreadingHTTPServer((HOST, PORT), Handler)
 logger.info(f"Python server started on http://localhost:8080/")
