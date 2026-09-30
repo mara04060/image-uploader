@@ -15,7 +15,7 @@ import time
 # Settings
 # ---------------
 HOST = "0.0.0.0"
-HOST_PORT = int(os.environ.get("HOST_PORT", 8080))
+HOST_PORT = int(os.environ.get("HOST_APPT", 8000))
 
 WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
@@ -75,8 +75,8 @@ def insert_image(connection: Connection, file_name: str, original_name: str, siz
             )
             VALUES (%s, %s, %s, %s)
             RETURNING id
-            """, (file_name, original_name, size, file_type)
-        cursor.execute(sql_script)
+            """
+        cursor.execute( sql_script, (file_name, original_name, size, file_type) )
         connection.commit()
         logger.info(f"Insert data {file_name}, {original_name}, {size} , {file_type}")
         logger.debug(f"SQL: %s", sql_script)
@@ -88,8 +88,8 @@ def get_images(connection: Connection, page: int = 1):
         sql_script = f"""
             SELECT id, filename, original_name, 'size', file_type, upload_time 
             FROM {DB_SCHEME}.images order by id desc OFFSET %s LIMIT 10;
-            """, (offset, )
-        cursor.execute(sql_script)
+            """
+        cursor.execute(sql_script, (offset, ))
         rows = cursor.fetchall()
         connection.commit()
         logger.debug(f"SQL: %s", sql_script)
@@ -109,8 +109,8 @@ def del_image(connection: Connection, image_id : int):
     with connection.cursor() as cursor:
         sql_script = None
         if image_id > 0:
-            sql_script = f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s RETURNING filename;", (image_id,)
-            cursor.execute(sql_script)
+            sql_script = f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s RETURNING filename;"
+            cursor.execute(sql_script, (image_id,))
             result = cursor.fetchone()
             connection.commit()
             if result is None:
