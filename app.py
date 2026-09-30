@@ -49,8 +49,7 @@ logger = logging.getLogger("AppLogger")
 # ---------------
 def create_table(connection: Connection):
     with connection.cursor() as cursor:
-        cursor.execute(
-        f"""     
+        sql_script = f"""     
         CREATE TABLE IF NOT EXISTS {DB_SCHEME}.images (
           id SERIAL PRIMARY KEY,
           filename TEXT NOT NULL,
@@ -60,14 +59,14 @@ def create_table(connection: Connection):
           file_type TEXT NOT NULL
       );
         """
-        )
+        cursor.execute(sql_script)
         connection.commit()
+    logger.debug(f"SQL: %s", sql_script)
     logger.info("Database table is ready!")
 
 def insert_image(connection: Connection, file_name: str, original_name: str, size: int, file_type: str):
     with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
+        sql_script = f"""
             INSERT INTO {DB_SCHEME}.images (
                 filename,
                 original_name,
@@ -76,25 +75,24 @@ def insert_image(connection: Connection, file_name: str, original_name: str, siz
             )
             VALUES (%s, %s, %s, %s)
             RETURNING id
-            """,
-            (file_name, original_name, size, file_type)
-        )
+            """, (file_name, original_name, size, file_type)
+        cursor.execute(sql_script)
         connection.commit()
         logger.info(f"Insert data {file_name}, {original_name}, {size} , {file_type}")
+        logger.debug(f"SQL: %s", sql_script)
         return cursor.fetchone()[0]
 
 def get_images(connection: Connection, page: int = 1):
     offset = (page -1 ) * 10
     with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
+        sql_script = f"""
             SELECT id, filename, original_name, 'size', file_type, upload_time 
             FROM {DB_SCHEME}.images order by id desc OFFSET %s LIMIT 10;
-            """,
-            (offset, )
-        )
+            """, (offset, )
+        cursor.execute(sql_script)
         rows = cursor.fetchall()
         connection.commit()
+        logger.debug(f"SQL: %s", sql_script)
 
         columns = [desc[0] for desc in cursor.description]
         result = [
@@ -109,16 +107,16 @@ def get_images(connection: Connection, page: int = 1):
 
 def del_image(connection: Connection, image_id : int):
     with connection.cursor() as cursor:
+        sql_script = None
         if image_id > 0:
-            cursor.execute(
-                f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s RETURNING filename;",
-                (image_id,)
-            )
+            sql_script = f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s RETURNING filename;", (image_id,)
+            cursor.execute(sql_script)
             result = cursor.fetchone()
             connection.commit()
             if result is None:
                 return False
     logger.info(f"SQL: Delete image id = %s", image_id)
+    logger.debug(f"SQL: %s", sql_script)
     return result[0]
 
 # ---------------
