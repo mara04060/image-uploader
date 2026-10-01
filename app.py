@@ -5,6 +5,7 @@ import uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import re
+from plistlib import dumps
 from urllib.parse import urlparse, parse_qs
 
 import psycopg
@@ -86,9 +87,10 @@ def get_images(connection: Connection, page: int = 1):
     offset = (page -1 ) * 10
     with connection.cursor() as cursor:
         sql_script = f"""
-            SELECT id, filename, original_name, 'size', file_type, upload_time 
-            FROM {DB_SCHEME}.images order by id desc OFFSET %s LIMIT 10;
+            SELECT id, filename, original_name, size, file_type, upload_time 
+            FROM {DB_SCHEME}.images order by id desc OFFSET %s LIMIT 10;            
             """
+
         cursor.execute(sql_script, (offset, ))
         rows = cursor.fetchall()
         connection.commit()
@@ -104,6 +106,26 @@ def get_images(connection: Connection, page: int = 1):
         ]
         logger.info("Result Data Select: %s", result )
         return result
+
+def get_pagination(onnection: Connection, page: int = 1):
+    with connection.cursor() as cursor:
+        sql_script = f"""
+             SELECT jsonb_build_object(
+                    'total_items', COUNT(id),
+                    'page', {page},
+                    'page_size', 10,
+                    'total_pages', CEIL(COUNT(id)::numeric / 10),
+                    'has_previous', {page} > 1,
+                    'has_next', {page} < CEIL(COUNT(id)::numeric / 10)
+                ) AS pagination
+                FROM public.images;
+             """
+        cursor.execute(sql_script)
+        result_json = cursor.fetchall()
+        connection.commit()
+        logger.debug(f"SQL: %s", sql_script)
+        logger.info(f"SQL: JSON : %s", result_json)
+        return result_json
 
 def del_image(connection: Connection, image_id : int):
     with connection.cursor() as cursor:
@@ -216,6 +238,7 @@ def send_json_dict(self, data: dict):
 
 def send_json(self, data):
     self.send_header("Content-type", "application/json")
+    self.send_header("Access-Control-Allow-Origin","*")
     response_body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
     self.send_header("Content-Length", str(len(response_body)))
     self.end_headers()
@@ -317,7 +340,12 @@ class Handler(SimpleHTTPRequestHandler):
                 logger.warning(f"Page not found: {e}")
                 return None
             logger.info(f"Page found: {page}")
-            send_json_in_list(self, get_images(connection, page), 200)
+            json_obk = {
+                "items": get_images(connection, page),
+                "pagination": get_pagination(connection, page)[0][0]
+            }
+            logger.info(f"JSON obk: {json_obk}")
+            send_json_in_list(self, json_obk, 200)
             return None
         self.send_error(404, "Not Found")
 
