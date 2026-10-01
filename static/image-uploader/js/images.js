@@ -2,16 +2,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const API_BASE_URL = 'http://localhost:8080';
 
+
     /*
-     * Текущая страница.
+     * Current page.
      *
-     * Backend является источником истины для pagination.
+     * Backend is the source of truth for pagination.
      */
+
     let page = 1;
 
 
     const fileListWrapper =
         document.getElementById('file-list-wrapper');
+
 
     const uploadRedirectButton =
         document.getElementById('upload-tab-btn');
@@ -41,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const uploadTab =
             document.getElementById('upload-tab-btn');
 
+
         const imagesTab =
             document.getElementById('images-tab-btn');
 
@@ -50,25 +54,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
         if (uploadTab) {
-            uploadTab.classList.remove('upload__tab--active');
+            uploadTab.classList.remove(
+                'upload__tab--active'
+            );
         }
 
 
         if (imagesTab) {
-            imagesTab.classList.remove('upload__tab--active');
+            imagesTab.classList.remove(
+                'upload__tab--active'
+            );
         }
 
 
         if (isImagesPage) {
 
             if (imagesTab) {
-                imagesTab.classList.add('upload__tab--active');
+
+                imagesTab.classList.add(
+                    'upload__tab--active'
+                );
             }
 
         } else {
 
             if (uploadTab) {
-                uploadTab.classList.add('upload__tab--active');
+
+                uploadTab.classList.add(
+                    'upload__tab--active'
+                );
             }
         }
     };
@@ -82,16 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
      * Backend response:
      *
      * {
-     *     "items": [
-     *         {
-     *             "id": 11,
-     *             "filename": "image_11.jpg",
-     *             "original_name": "photo_11.jpg",
-     *             "size": 245678,
-     *             "upload_time": "2026-10-01T00:10:25Z",
-     *             "file_type": "image/jpeg"
-     *         }
-     *     ],
+     *     "items": [],
      *
      *     "pagination": {
      *         "total_items": 22,
@@ -169,7 +174,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             try {
 
-                data = JSON.parse(responseText);
+                data =
+                    JSON.parse(responseText);
 
             } catch (error) {
 
@@ -261,7 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /* =================================================
-             * Validate pagination.has_previous
+             * Validate has_previous
              * ================================================= */
 
             if (
@@ -275,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /* =================================================
-             * Validate pagination.has_next
+             * Validate has_next
              * ================================================= */
 
             if (
@@ -326,60 +332,115 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderPagination = (paginationData) => {
 
         /*
-         * Remove previous pagination.
+         * IMPORTANT:
+         *
+         * Use the existing <section id="pagination">
+         * from HTML.
+         *
+         * Do NOT remove it.
+         * Do NOT create another element with id="pagination".
          */
 
-        const oldPagination =
+        const pagination =
             document.getElementById('pagination');
 
-        if (oldPagination) {
-            oldPagination.remove();
+
+        if (!pagination) {
+
+            console.error(
+                'Елемент #pagination не знайдено.'
+            );
+
+            return;
         }
 
 
         /*
-         * Create pagination container.
+         * Remove only old buttons/content.
          */
 
-        const pagination =
-            document.createElement('div');
+        pagination.innerHTML = '';
 
-        pagination.id =
-            'pagination';
+
+        /*
+         * Add pagination class.
+         */
 
         pagination.className =
             'pagination';
 
 
         /* =====================================================
-         * Previous button
+         * Previous / Back button
          * ===================================================== */
 
         const previousButton =
             document.createElement('button');
 
+
         previousButton.type =
             'button';
+
 
         previousButton.className =
             'pagination__button';
 
+
+        /*
+         * English text + left arrow.
+         */
+
         previousButton.textContent =
-            'Назад';
+            '← Back';
 
 
         /*
-         * Backend tells us whether
-         * previous page exists.
+         * IMPORTANT:
+         *
+         * has_previous === true
+         *     -> button enabled
+         *
+         * has_previous === false
+         *     -> button disabled
          */
 
         previousButton.disabled =
             !paginationData.has_previous;
 
 
+        /*
+         * Explicit class for visual state.
+         *
+         * This makes the state clear in CSS.
+         */
+
+        previousButton.classList.toggle(
+            'pagination__button--disabled',
+            !paginationData.has_previous
+        );
+
+
+        previousButton.classList.toggle(
+            'pagination__button--active',
+            paginationData.has_previous
+        );
+
+
+        /*
+         * Click handler.
+         */
+
         previousButton.addEventListener(
             'click',
             async () => {
+
+                /*
+                 * Safety check.
+                 *
+                 * Even if somebody triggers the event manually,
+                 * we do not request the previous page when
+                 * backend says there is no previous page.
+                 */
 
                 if (!paginationData.has_previous) {
                     return;
@@ -396,19 +457,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
         /* =====================================================
-         * Page number
+         * Current page
          * ===================================================== */
 
         const pageNumber =
             document.createElement('span');
+
 
         pageNumber.className =
             'pagination__page';
 
 
         pageNumber.textContent =
-            `Страница ${paginationData.page} ` +
-            `из ${paginationData.total_pages}`;
+            `Page ${paginationData.page} ` +
+            `of ${paginationData.total_pages}`;
 
 
         /* =====================================================
@@ -418,28 +480,64 @@ document.addEventListener('DOMContentLoaded', () => {
         const nextButton =
             document.createElement('button');
 
+
         nextButton.type =
             'button';
+
 
         nextButton.className =
             'pagination__button';
 
+
+        /*
+         * English text + right arrow.
+         */
+
         nextButton.textContent =
-            'Далее';
+            'Next →';
 
 
         /*
-         * Backend tells us whether
-         * next page exists.
+         * IMPORTANT:
+         *
+         * has_next === true
+         *     -> button enabled
+         *
+         * has_next === false
+         *     -> button disabled
          */
 
         nextButton.disabled =
             !paginationData.has_next;
 
 
+        /*
+         * Explicit class for visual state.
+         */
+
+        nextButton.classList.toggle(
+            'pagination__button--disabled',
+            !paginationData.has_next
+        );
+
+
+        nextButton.classList.toggle(
+            'pagination__button--active',
+            paginationData.has_next
+        );
+
+
+        /*
+         * Click handler.
+         */
+
         nextButton.addEventListener(
             'click',
             async () => {
+
+                /*
+                 * Safety check.
+                 */
 
                 if (!paginationData.has_next) {
                     return;
@@ -463,21 +561,14 @@ document.addEventListener('DOMContentLoaded', () => {
             previousButton
         );
 
+
         pagination.appendChild(
             pageNumber
         );
 
+
         pagination.appendChild(
             nextButton
-        );
-
-
-        /*
-         * Add pagination to page.
-         */
-
-        fileListWrapper.appendChild(
-            pagination
         );
     };
 
@@ -512,7 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 class="upload__promt"
                 style="text-align: center; margin-top: 50px;"
             >
-                Завантаження...
+                Loading...
             </p>
         `;
 
@@ -541,12 +632,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const files =
             data.items;
 
+
         const paginationData =
             data.pagination;
 
 
         /*
-         * Clear old content.
+         * Clear old file content.
+         *
+         * #pagination is outside #file-list-wrapper,
+         * so it will NOT be removed.
          */
 
         fileListWrapper.innerHTML = '';
@@ -563,7 +658,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     class="upload__promt"
                     style="text-align: center; margin-top: 50px;"
                 >
-                    Зображень ще немає.
+                    No images yet.
                 </p>
             `;
 
@@ -592,6 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const container =
             document.createElement('div');
 
+
         container.className =
             'file-list-container';
 
@@ -602,6 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const header =
             document.createElement('div');
+
 
         header.className =
             'file-list-header';
@@ -633,6 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const list =
             document.createElement('div');
+
 
         list.id =
             'file-list';
@@ -698,6 +796,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const fileItem =
                 document.createElement('div');
 
+
             fileItem.className =
                 'file-list-item';
 
@@ -709,12 +808,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const nameColumn =
                 document.createElement('div');
 
+
             nameColumn.className =
                 'file-col file-col-name';
 
 
             const fileIcon =
                 document.createElement('span');
+
 
             fileIcon.className =
                 'file-icon';
@@ -734,8 +835,10 @@ document.addEventListener('DOMContentLoaded', () => {
             image.src =
                 imageUrl;
 
+
             image.width =
                 100;
+
 
             image.height =
                 100;
@@ -749,6 +852,7 @@ document.addEventListener('DOMContentLoaded', () => {
             image.title =
                 originalName;
 
+
             image.alt =
                 originalName;
 
@@ -756,6 +860,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fileIcon.appendChild(
                 image
             );
+
 
             nameColumn.appendChild(
                 fileIcon
@@ -768,6 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const urlColumn =
                 document.createElement('div');
+
 
             urlColumn.className =
                 'file-col file-col-url';
@@ -784,6 +890,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const deleteColumn =
                 document.createElement('div');
 
+
             deleteColumn.className =
                 'file-col file-col-delete';
 
@@ -791,8 +898,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const deleteButton =
                 document.createElement('button');
 
+
             deleteButton.type =
                 'button';
+
 
             deleteButton.className =
                 'delete-btn';
@@ -818,6 +927,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 deleteImage
             );
 
+
             deleteColumn.appendChild(
                 deleteButton
             );
@@ -831,9 +941,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 nameColumn
             );
 
+
             fileItem.appendChild(
                 urlColumn
             );
+
 
             fileItem.appendChild(
                 deleteColumn
@@ -849,6 +961,7 @@ document.addEventListener('DOMContentLoaded', () => {
         container.appendChild(
             list
         );
+
 
         fileListWrapper.appendChild(
             container
@@ -1062,6 +1175,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     updateTabStyles();
+
 
     displayFiles();
 });
