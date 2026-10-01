@@ -1,52 +1,72 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     const API_BASE_URL = 'http://localhost:8080';
-    var page = 1;
 
-    const fileListWrapper = document.getElementById('file-list-wrapper');
-    const uploadRedirectButton = document.getElementById('upload-tab-btn');
-
-
-    /* images
-     * ---------------------------------------------------------
-     * F5 and Escape keys
-     * ---------------------------------------------------------
+    /*
+     * Текущая страница.
+     *
+     * Backend является источником истины для pagination.
      */
+    let page = 1;
+
+
+    const fileListWrapper =
+        document.getElementById('file-list-wrapper');
+
+    const uploadRedirectButton =
+        document.getElementById('upload-tab-btn');
+
+
+    /* =========================================================
+     * F5 and Escape keys
+     * ========================================================= */
 
     document.addEventListener('keydown', (event) => {
+
         if (event.key === 'F5' || event.key === 'Escape') {
+
             event.preventDefault();
+
             window.location.href = 'upload.html';
         }
     });
 
 
-    /*
-     * ---------------------------------------------------------
+    /* =========================================================
      * Update active tab
-     * ---------------------------------------------------------
-     */
+     * ========================================================= */
 
     const updateTabStyles = () => {
-        const uploadTab = document.getElementById('upload-tab-btn');
-        const imagesTab = document.getElementById('images-tab-btn');
+
+        const uploadTab =
+            document.getElementById('upload-tab-btn');
+
+        const imagesTab =
+            document.getElementById('images-tab-btn');
+
 
         const isImagesPage =
             window.location.pathname.includes('images.html');
+
 
         if (uploadTab) {
             uploadTab.classList.remove('upload__tab--active');
         }
 
+
         if (imagesTab) {
             imagesTab.classList.remove('upload__tab--active');
         }
 
+
         if (isImagesPage) {
+
             if (imagesTab) {
                 imagesTab.classList.add('upload__tab--active');
             }
+
         } else {
+
             if (uploadTab) {
                 uploadTab.classList.add('upload__tab--active');
             }
@@ -54,19 +74,42 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    /*
-     * ---------------------------------------------------------
-     * Get images list
+    /* =========================================================
+     * GET images list
      *
-     * GET http://localhost:8080/images-list
-     * ---------------------------------------------------------
-     */
+     * GET /images-list?page=1
+     *
+     * Backend response:
+     *
+     * {
+     *     "items": [
+     *         {
+     *             "id": 11,
+     *             "filename": "image_11.jpg",
+     *             "original_name": "photo_11.jpg",
+     *             "size": 245678,
+     *             "upload_time": "2026-10-01T00:10:25Z",
+     *             "file_type": "image/jpeg"
+     *         }
+     *     ],
+     *
+     *     "pagination": {
+     *         "total_items": 22,
+     *         "page": 1,
+     *         "total_pages": 3,
+     *         "has_previous": false,
+     *         "has_next": true
+     *     }
+     * }
+     * ========================================================= */
 
     const getImages = async () => {
 
         try {
 
-            console.log('[API] GET /images-list');
+            console.log(
+                `[API] GET /images-list?page=${page}`
+            );
 
 
             const response = await fetch(
@@ -84,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             if (!response.ok) {
+
                 throw new Error(
                     `Сервер повернув HTTP ${response.status}`
                 );
@@ -91,14 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /*
-             * Read the response as text.
-             *
-             * This allows us to correctly handle:
-             *
-             * {}
-             * []
-             * empty response
-             * invalid JSON
+             * Read response as text first.
              */
 
             const responseText =
@@ -112,16 +149,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /*
-             * Treat an empty response as an empty list.
+             * Empty response is an error.
              */
 
             if (!responseText.trim()) {
-                return [];
+
+                throw new Error(
+                    'Сервер повернув порожню відповідь.'
+                );
             }
 
 
             let data;
 
+
+            /*
+             * Parse JSON.
+             */
 
             try {
 
@@ -135,46 +179,123 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            /*
-             * If the server returned an empty object:
-             *
-             * {}
-             *
-             * treat the result as an empty list.
-             */
+            /* =================================================
+             * Validate root object
+             * ================================================= */
 
             if (
-                data &&
-                typeof data === 'object' &&
-                !Array.isArray(data) &&
-                Object.keys(data).length === 0
+                !data ||
+                typeof data !== 'object' ||
+                Array.isArray(data)
             ) {
-                return [];
-            }
-
-
-            /*
-             * Expected format:
-             *
-             * [
-             *   {
-             *      id,
-             *      filename,
-             *      original_name,
-             *      size,
-             *      upload_time,
-             *      file_type
-             *   }
-             * ]
-             */
-
-            if (!Array.isArray(data)) {
 
                 throw new Error(
                     'Некоректний формат відповіді. ' +
-                    'Очікувався JSON-масив.'
+                    'Очікувався JSON-об\'єкт.'
                 );
             }
+
+
+            /* =================================================
+             * Validate items
+             * ================================================= */
+
+            if (!Array.isArray(data.items)) {
+
+                throw new Error(
+                    'Некоректний формат відповіді. ' +
+                    'Поле "items" повинно бути масивом.'
+                );
+            }
+
+
+            /* =================================================
+             * Validate pagination
+             * ================================================= */
+
+            if (
+                !data.pagination ||
+                typeof data.pagination !== 'object' ||
+                Array.isArray(data.pagination)
+            ) {
+
+                throw new Error(
+                    'Некоректний формат відповіді. ' +
+                    'Відсутнє поле "pagination".'
+                );
+            }
+
+
+            const pagination =
+                data.pagination;
+
+
+            /* =================================================
+             * Validate pagination.page
+             * ================================================= */
+
+            if (
+                pagination.page === undefined ||
+                pagination.page === null
+            ) {
+
+                throw new Error(
+                    'У pagination відсутнє поле "page".'
+                );
+            }
+
+
+            /* =================================================
+             * Validate pagination.total_pages
+             * ================================================= */
+
+            if (
+                pagination.total_pages === undefined ||
+                pagination.total_pages === null
+            ) {
+
+                throw new Error(
+                    'У pagination відсутнє поле "total_pages".'
+                );
+            }
+
+
+            /* =================================================
+             * Validate pagination.has_previous
+             * ================================================= */
+
+            if (
+                typeof pagination.has_previous !== 'boolean'
+            ) {
+
+                throw new Error(
+                    'Поле "has_previous" повинно бути boolean.'
+                );
+            }
+
+
+            /* =================================================
+             * Validate pagination.has_next
+             * ================================================= */
+
+            if (
+                typeof pagination.has_next !== 'boolean'
+            ) {
+
+                throw new Error(
+                    'Поле "has_next" повинно бути boolean.'
+                );
+            }
+
+
+            /*
+             * Backend is the source of truth.
+             *
+             * Synchronize current page.
+             */
+
+            page =
+                Number(pagination.page);
 
 
             return data;
@@ -198,11 +319,172 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    /*
-     * ---------------------------------------------------------
-     * Build images list
-     * ---------------------------------------------------------
-     */
+    /* =========================================================
+     * Render pagination
+     * ========================================================= */
+
+    const renderPagination = (paginationData) => {
+
+        /*
+         * Remove previous pagination.
+         */
+
+        const oldPagination =
+            document.getElementById('pagination');
+
+        if (oldPagination) {
+            oldPagination.remove();
+        }
+
+
+        /*
+         * Create pagination container.
+         */
+
+        const pagination =
+            document.createElement('div');
+
+        pagination.id =
+            'pagination';
+
+        pagination.className =
+            'pagination';
+
+
+        /* =====================================================
+         * Previous button
+         * ===================================================== */
+
+        const previousButton =
+            document.createElement('button');
+
+        previousButton.type =
+            'button';
+
+        previousButton.className =
+            'pagination__button';
+
+        previousButton.textContent =
+            'Назад';
+
+
+        /*
+         * Backend tells us whether
+         * previous page exists.
+         */
+
+        previousButton.disabled =
+            !paginationData.has_previous;
+
+
+        previousButton.addEventListener(
+            'click',
+            async () => {
+
+                if (!paginationData.has_previous) {
+                    return;
+                }
+
+
+                page =
+                    Number(paginationData.page) - 1;
+
+
+                await displayFiles();
+            }
+        );
+
+
+        /* =====================================================
+         * Page number
+         * ===================================================== */
+
+        const pageNumber =
+            document.createElement('span');
+
+        pageNumber.className =
+            'pagination__page';
+
+
+        pageNumber.textContent =
+            `Страница ${paginationData.page} ` +
+            `из ${paginationData.total_pages}`;
+
+
+        /* =====================================================
+         * Next button
+         * ===================================================== */
+
+        const nextButton =
+            document.createElement('button');
+
+        nextButton.type =
+            'button';
+
+        nextButton.className =
+            'pagination__button';
+
+        nextButton.textContent =
+            'Далее';
+
+
+        /*
+         * Backend tells us whether
+         * next page exists.
+         */
+
+        nextButton.disabled =
+            !paginationData.has_next;
+
+
+        nextButton.addEventListener(
+            'click',
+            async () => {
+
+                if (!paginationData.has_next) {
+                    return;
+                }
+
+
+                page =
+                    Number(paginationData.page) + 1;
+
+
+                await displayFiles();
+            }
+        );
+
+
+        /* =====================================================
+         * Assemble pagination
+         * ===================================================== */
+
+        pagination.appendChild(
+            previousButton
+        );
+
+        pagination.appendChild(
+            pageNumber
+        );
+
+        pagination.appendChild(
+            nextButton
+        );
+
+
+        /*
+         * Add pagination to page.
+         */
+
+        fileListWrapper.appendChild(
+            pagination
+        );
+    };
+
+
+    /* =========================================================
+     * Display files
+     * ========================================================= */
 
     const displayFiles = async () => {
 
@@ -217,34 +499,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
         console.log(
-            '[UI] Requesting images list...'
+            `[UI] Requesting images list. Page: ${page}`
         );
 
 
-        const files = await getImages();
+        /* =====================================================
+         * Loading
+         * ===================================================== */
+
+        fileListWrapper.innerHTML = `
+            <p
+                class="upload__promt"
+                style="text-align: center; margin-top: 50px;"
+            >
+                Завантаження...
+            </p>
+        `;
 
 
         /*
-         * null means that the request failed.
-         *
-         * getImages() has already shown an alert.
+         * Request data from backend.
          */
 
-        if (files === null) {
+        const data =
+            await getImages();
+
+
+        /*
+         * Request failed.
+         */
+
+        if (data === null) {
             return;
         }
 
 
         /*
-         * Clear previous content.
+         * Extract items and pagination.
+         */
+
+        const files =
+            data.items;
+
+        const paginationData =
+            data.pagination;
+
+
+        /*
+         * Clear old content.
          */
 
         fileListWrapper.innerHTML = '';
 
 
-        /*
-         * Display a message when there are no files.
-         */
+        /* =====================================================
+         * No images
+         * ===================================================== */
 
         if (files.length === 0) {
 
@@ -257,17 +567,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 </p>
             `;
 
+
             updateTabStyles();
+
+
+            /*
+             * Render pagination even when
+             * items array is empty.
+             */
+
+            renderPagination(
+                paginationData
+            );
+
 
             return;
         }
 
 
-        /*
-         * -----------------------------------------------------
+        /* =====================================================
          * List container
-         * -----------------------------------------------------
-         */
+         * ===================================================== */
 
         const container =
             document.createElement('div');
@@ -276,11 +596,9 @@ document.addEventListener('DOMContentLoaded', () => {
             'file-list-container';
 
 
-        /*
-         * -----------------------------------------------------
+        /* =====================================================
          * Header
-         * -----------------------------------------------------
-         */
+         * ===================================================== */
 
         const header =
             document.createElement('div');
@@ -304,26 +622,27 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
 
-        container.appendChild(header);
+        container.appendChild(
+            header
+        );
 
 
-        /*
-         * -----------------------------------------------------
+        /* =====================================================
          * File list
-         * -----------------------------------------------------
-         */
+         * ===================================================== */
 
         const list =
             document.createElement('div');
 
-        list.id = 'file-list';
+        list.id =
+            'file-list';
 
 
         files.forEach((fileData) => {
 
-            /*
-             * Validate the object.
-             */
+            /* =================================================
+             * Validate object
+             * ================================================= */
 
             if (
                 !fileData ||
@@ -339,9 +658,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            /*
-             * Validate the ID.
-             */
+            /* =================================================
+             * Validate ID
+             * ================================================= */
 
             if (
                 fileData.id === undefined ||
@@ -357,9 +676,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            /*
-             * Validate the filename.
-             */
+            /* =================================================
+             * Validate filename
+             * ================================================= */
 
             if (!fileData.filename) {
 
@@ -372,11 +691,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            /*
-             * -------------------------------------------------
+            /* =================================================
              * File row
-             * -------------------------------------------------
-             */
+             * ================================================= */
 
             const fileItem =
                 document.createElement('div');
@@ -385,11 +702,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 'file-list-item';
 
 
-            /*
-             * -------------------------------------------------
-             * Name
-             * -------------------------------------------------
-             */
+            /* =================================================
+             * Name column
+             * ================================================= */
 
             const nameColumn =
                 document.createElement('div');
@@ -411,14 +726,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const imageUrl =
                 `${API_BASE_URL}/images/` +
-                encodeURIComponent(fileData.filename);
+                encodeURIComponent(
+                    fileData.filename
+                );
 
 
-            image.src = imageUrl;
+            image.src =
+                imageUrl;
 
-            image.width = 100;
+            image.width =
+                100;
 
-            image.height = 100;
+            image.height =
+                100;
 
 
             const originalName =
@@ -426,21 +746,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 fileData.filename;
 
 
-            image.title = originalName;
+            image.title =
+                originalName;
 
-            image.alt = originalName;
-
-
-            fileIcon.appendChild(image);
-
-            nameColumn.appendChild(fileIcon);
+            image.alt =
+                originalName;
 
 
-            /*
-             * -------------------------------------------------
-             * URL
-             * -------------------------------------------------
-             */
+            fileIcon.appendChild(
+                image
+            );
+
+            nameColumn.appendChild(
+                fileIcon
+            );
+
+
+            /* =================================================
+             * URL column
+             * ================================================= */
 
             const urlColumn =
                 document.createElement('div');
@@ -453,11 +777,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 imageUrl;
 
 
-            /*
-             * -------------------------------------------------
-             * Delete
-             * -------------------------------------------------
-             */
+            /* =================================================
+             * Delete column
+             * ================================================= */
 
             const deleteColumn =
                 document.createElement('div');
@@ -469,15 +791,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const deleteButton =
                 document.createElement('button');
 
-            deleteButton.type = 'button';
+            deleteButton.type =
+                'button';
 
             deleteButton.className =
                 'delete-btn';
 
-
-            /*
-             * Database record ID.
-             */
 
             deleteButton.dataset.id =
                 String(fileData.id);
@@ -486,56 +805,81 @@ document.addEventListener('DOMContentLoaded', () => {
             const deleteImage =
                 document.createElement('img');
 
+
             deleteImage.src =
                 '../image-uploader/img/icon/delete.png';
+
 
             deleteImage.alt =
                 'delete icon';
 
 
-            deleteButton.appendChild(deleteImage);
+            deleteButton.appendChild(
+                deleteImage
+            );
 
-            deleteColumn.appendChild(deleteButton);
-
-
-            /*
-             * -------------------------------------------------
-             * Assemble the row
-             * -------------------------------------------------
-             */
-
-            fileItem.appendChild(nameColumn);
-
-            fileItem.appendChild(urlColumn);
-
-            fileItem.appendChild(deleteColumn);
+            deleteColumn.appendChild(
+                deleteButton
+            );
 
 
-            list.appendChild(fileItem);
+            /* =================================================
+             * Assemble row
+             * ================================================= */
+
+            fileItem.appendChild(
+                nameColumn
+            );
+
+            fileItem.appendChild(
+                urlColumn
+            );
+
+            fileItem.appendChild(
+                deleteColumn
+            );
+
+
+            list.appendChild(
+                fileItem
+            );
         });
 
 
-        container.appendChild(list);
+        container.appendChild(
+            list
+        );
 
-        fileListWrapper.appendChild(container);
+        fileListWrapper.appendChild(
+            container
+        );
+
+
+        /* =====================================================
+         * Pagination
+         * ===================================================== */
+
+        renderPagination(
+            paginationData
+        );
 
 
         updateTabStyles();
 
 
         console.log(
-            `[UI] Images displayed: ${files.length}`
+            `[UI] Images displayed: ${files.length}. ` +
+            `Page: ${paginationData.page}/` +
+            `${paginationData.total_pages}`
         );
     };
 
 
-    /*
-     * ---------------------------------------------------------
+    /* =========================================================
      * Delete image
      *
      * DELETE /delete/{id}
-     * ---------------------------------------------------------
-     */
+     * ========================================================= */
 
     const deleteFile = async (imageId) => {
 
@@ -561,7 +905,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             const response = await fetch(
-                `${API_BASE_URL}/delete/${encodeURIComponent(imageId)}`,
+                `${API_BASE_URL}/delete/` +
+                `${encodeURIComponent(imageId)}`,
                 {
                     method: 'DELETE'
                 }
@@ -582,15 +927,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            /*
-             * The server may return:
-             *
-             * {}
-             * []
-             * JSON
-             * empty response
-             */
-
             const responseText =
                 await response.text();
 
@@ -602,15 +938,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /*
-             * If the response is not empty,
-             * verify that it contains valid JSON.
+             * If response isn't empty,
+             * verify valid JSON.
              */
 
             if (responseText.trim()) {
 
                 try {
 
-                    JSON.parse(responseText);
+                    JSON.parse(
+                        responseText
+                    );
 
                 } catch (error) {
 
@@ -623,9 +961,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
             /*
-             * Deletion completed successfully.
+             * Reload current page.
              *
-             * Reload the updated list.
+             * Backend recalculates pagination.
              */
 
             await displayFiles();
@@ -646,13 +984,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    /*
-     * ---------------------------------------------------------
+    /* =========================================================
      * Delete button handler
-     *
-     * Event delegation is used.
-     * ---------------------------------------------------------
-     */
+     * ========================================================= */
 
     if (fileListWrapper) {
 
@@ -661,22 +995,19 @@ document.addEventListener('DOMContentLoaded', () => {
             async (event) => {
 
                 /*
-                 * The click may occur directly on the
-                 * button or on the image inside the button.
+                 * Event delegation.
                  */
 
                 const deleteButton =
-                    event.target.closest('.delete-btn');
+                    event.target.closest(
+                        '.delete-btn'
+                    );
 
 
                 if (!deleteButton) {
                     return;
                 }
 
-
-                /*
-                 * Get the image ID.
-                 */
 
                 const imageId =
                     deleteButton.dataset.id;
@@ -689,23 +1020,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
                 /*
-                 * Disable the button while the request is running.
+                 * Disable button while deleting.
                  */
 
-                deleteButton.disabled = true;
+                deleteButton.disabled =
+                    true;
 
 
-                await deleteFile(imageId);
+                await deleteFile(
+                    imageId
+                );
             }
         );
     }
 
 
-    /*
-     * ---------------------------------------------------------
+    /* =========================================================
      * Redirect to upload.html
-     * ---------------------------------------------------------
-     */
+     * ========================================================= */
 
     if (uploadRedirectButton) {
 
@@ -719,17 +1051,17 @@ document.addEventListener('DOMContentLoaded', () => {
         );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * Initial list loading
-     *
-     * GET http://localhost:8080/images-list
-     * ---------------------------------------------------------
-     */
+
+    /* =========================================================
+     * Initial page loading
+     * ========================================================= */
 
     console.log(
         '[INIT] Images page loaded.'
     );
+
+
     updateTabStyles();
+
     displayFiles();
 });
