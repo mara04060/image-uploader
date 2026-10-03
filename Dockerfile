@@ -27,8 +27,6 @@ CMD ["python3", "-u", "app.py"]
 
 # NGINX
 FROM nginx:alpine AS nginx
-
 COPY nginx.conf /etc/nginx/nginx.conf
-
 COPY static/ /app/static/
 RUN mkdir -p /app/images /logs

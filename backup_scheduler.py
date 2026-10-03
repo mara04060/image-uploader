@@ -7,9 +7,7 @@ from pathlib import Path
 
 WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
-START_DIR = WEB_DIR / "static"
-UPLOAD_DIR = WEB_DIR / "images"
-LOG_FILE = LOG_DIR / "app.log"
+LOG_FILE = LOG_DIR / "backup.log"
 
 DB_HOST = "db"
 DB_PORT = int(os.environ.get("DB_PORT", 5432))
@@ -18,7 +16,7 @@ DB_NAME = os.environ.get("DB_NAME", "images_db")
 DB_USER = os.environ.get("DB_USER", "root_user")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
-BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backup"))
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backups"))
 BACKUP_INTERVAL_MINUTES = int(os.environ.get("BACKUP_INTERVAL_MINUTES", 2))
 
 logging.basicConfig(
@@ -30,7 +28,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger("AppLogger")
+logger = logging.getLogger("BackUpSystem")
 
 
 def create_backup():

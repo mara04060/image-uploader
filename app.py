@@ -126,19 +126,31 @@ def get_pagination(onnection: Connection, page: int = 1):
         logger.info(f"SQL: JSON : %s", result_json)
         return result_json
 
+def get_image_filename(connection: Connection, image_id: int) -> str | None:
+    if image_id <= 0:
+        return None
+
+    with connection.cursor() as cursor:
+        sql_script = f"SELECT filename FROM {DB_SCHEME}.images WHERE id = %s;"
+        cursor.execute(sql_script, (image_id,))
+        result = cursor.fetchone()
+    logger.debug("SQL: %s", sql_script)
+
+    if result is None:
+        return None
+
+    return result[0]
+
 def del_image(connection: Connection, image_id : int):
     with connection.cursor() as cursor:
         sql_script = None
         if image_id > 0:
-            sql_script = f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s RETURNING filename;"
+            sql_script = f"DELETE  FROM {DB_SCHEME}.images WHERE id = %s;"
             cursor.execute(sql_script, (image_id,))
-            result = cursor.fetchone()
             connection.commit()
-            if result is None:
-                return False
     logger.info(f"SQL: Delete image id = %s", image_id)
     logger.debug(f"SQL: %s", sql_script)
-    return result[0]
+    return True
 
 # ---------------
 # Helpers
@@ -339,12 +351,12 @@ class Handler(SimpleHTTPRequestHandler):
                 logger.warning(f"Page not found: {e}")
                 return None
             logger.info(f"Page found: {page}")
-            json_obk = {
+            json_obj = {
                 "items": get_images(connection, page),
                 "pagination": get_pagination(connection, page)[0][0]
             }
-            logger.info(f"JSON obk: {json_obk}")
-            send_json_in_list(self, json_obk, 200)
+            logger.info(f"JSON obj: {json_obj}")
+            send_json_in_list(self, json_obj, 200)
             return None
         self.send_error(404, "Not Found")
 
@@ -361,21 +373,23 @@ class Handler(SimpleHTTPRequestHandler):
             return None
 
         image_id = int(match.group(1))
-        logger.info("DELETE image id=%s",image_id)
-        delete_file_name = del_image(connection,image_id)
+        delete_file_name = get_image_filename(connection, image_id)
+        if delete_file_name:
+            try:
+                logger.info(f"DELETE file: {delete_file_name}")
+                delete_file(delete_file_name)
+                logger.info(f"Remove file: {delete_file_name}")
 
-        if not delete_file_name:
+                logger.info("DELETE image id=%s", image_id)
+                del_image(connection, image_id)
+            except ValueError as e:
+                logger.warning(e)
+                send_params(self, 404, e)
+        else:
             send_params(self, 404, f"Image not found ID:{image_id}")
             return None
-        try:
-            logger.info(f"DELETE file: {delete_file_name}")
-            delete_file(delete_file_name)
-            logger.info(f"Remove file: {delete_file_name}")
-        except ValueError as e:
-            logger.warning(e)
-            send_params(self, 404, e)
-        send_params(self,200,f"Image deleted ID: {image_id}")
 
+        send_params(self,200,f"Image deleted ID: {image_id}")
 
 # ---------------
 # Db Connect
@@ -396,9 +410,14 @@ while not connection:
         connection = None
         time.sleep(1)
 
-# ---------------
-# Start Server
-# ---------------
-server = ThreadingHTTPServer((HOST, HOST_PORT), Handler)
-logger.info(f"Python server started on http://localhost:8080/")
-server.serve_forever()
+def main():
+    # ---------------
+    # Start Server
+    # ---------------
+    server = ThreadingHTTPServer((HOST, HOST_PORT), Handler)
+    logger.info(f"Python server started on http://localhost:8080/")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

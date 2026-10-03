@@ -35,46 +35,49 @@ services:
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
-    expose:
-      - "8000"
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
-      APP_PORT: 8000
+      APP_PORT: ${APP_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_SCHEME: ${DB_SCHEME}
       DB_PORT: ${DB_PORT}
+    volumes:
+      - ./images:/app/images
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      # Python: read/write
-      - ./images:/app/images
-      - ./logs:/app/logs
     networks:
       - app-network
 
-
   backup_scheduler:
-      build:
-        context: .
-        dockerfile: Dockerfile
-        target: app
-      container_name: backup_scheduler
-      command: ["python3", "-u", "backup_scheduler.py"]
-      environment:
-        BACKUP_DIR: ${BACKUP_DIR}
-        DB_NAME: ${DB_NAME}
-        DB_USER: ${DB_USER}
-        DB_PASSWORD: ${DB_PASSWORD}
-        BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES}
-      volumes:
-        - .${BACKUP_DIR}:${BACKUP_DIR}
-      networks:
-        - app-network
-      depends_on:
-        - db
-      restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    container_name: backup_scheduler
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["python3", "-u", "backup_scheduler.py"]
+    environment:
+      BACKUP_DIR: ${BACKUP_DIR}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES}
+    volumes:
+      - .${BACKUP_DIR}:${BACKUP_DIR}
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: always
 
   # NGINX
   nginx:
