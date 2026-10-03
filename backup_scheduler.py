@@ -30,7 +30,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger("BackUplogger")
+logger = logging.getLogger("AppLogger")
 
 
 def create_backup():
