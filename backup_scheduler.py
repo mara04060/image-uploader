@@ -19,7 +19,7 @@ DB_USER = os.environ.get("DB_USER", "root_user")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backup"))
-BACKUP_INTERVAL_MINUTES = 60
+BACKUP_INTERVAL_MINUTES = os.environ.get("BACKUP_INTERVAL_MINUTES", 2)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +36,6 @@ logger = logging.getLogger("BackUplogger")
 def create_backup():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     backup_file = ( BACKUP_DIR / f"backup_{timestamp}.sql" )
-    # command = ["docker", "exec","-t", DB_HOST, "pg_dump", "-U", DB_USER, DB_NAME ]
     command =[ "pg_dump", "-h", DB_HOST, "-p", str(DB_PORT), "-U", DB_USER, "-d", DB_NAME,]
     logger.info( f"Creating backup: {backup_file}" )
     try:

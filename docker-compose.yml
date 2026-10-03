@@ -63,11 +63,11 @@ services:
       container_name: backup_scheduler
       command: ["python3", "-u", "backup_scheduler.py"]
       environment:
-        BACKUP_INTERVAL_MINUTES: 60
         BACKUP_DIR: ${BACKUP_DIR}
         DB_NAME: ${DB_NAME}
         DB_USER: ${DB_USER}
         DB_PASSWORD: ${DB_PASSWORD}
+        BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES}
       volumes:
         - .${BACKUP_DIR}:${BACKUP_DIR}
       networks:
