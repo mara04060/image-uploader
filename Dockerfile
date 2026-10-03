@@ -3,6 +3,7 @@ FROM python:3.12-alpine AS app
 
 WORKDIR /app
 # Install dependencies as root
+RUN apk add --no-cache postgresql-client
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
