@@ -5,7 +5,6 @@ import uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import re
-from plistlib import dumps
 from urllib.parse import urlparse, parse_qs
 
 import psycopg
@@ -29,7 +28,7 @@ DB_PORT = int(os.environ.get("DB_PORT", 5432))
 DB_SCHEME = os.environ.get("DB_SCHEME", "public")
 DB_NAME = os.environ.get("DB_NAME", "images_db")
 DB_USER = os.environ.get("DB_USER", "root_user")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "passw123")
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
 MAX_FILE_SIZE = 1024 * 1024 * int(os.environ.get("MAX_FILE_SIZE", 5))

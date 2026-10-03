@@ -6,9 +6,9 @@ services:
     restart: always
     shm_size: 128mb
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
     ports:
       - "${DB_PORT}:5432"
     volumes:
@@ -39,6 +39,11 @@ services:
       - "8000"
     environment:
       APP_PORT: 8000
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SCHEME: ${DB_SCHEME}
+      DB_PORT: ${DB_PORT}
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +54,27 @@ services:
     networks:
       - app-network
 
+
+  backup_scheduler:
+      build:
+        context: .
+        dockerfile: Dockerfile
+        target: app
+      container_name: backup_scheduler
+      command: ["python3", "-u", "backup_scheduler.py"]
+      environment:
+        BACKUP_INTERVAL_MINUTES: 60
+        BACKUP_DIR: ${BACKUP_DIR}
+        DB_NAME: ${DB_NAME}
+        DB_USER: ${DB_USER}
+        DB_PASSWORD: ${DB_PASSWORD}
+      volumes:
+        - .${BACKUP_DIR}:${BACKUP_DIR}
+      networks:
+        - app-network
+      depends_on:
+        - db
+      restart: always
 
   # NGINX
   nginx:

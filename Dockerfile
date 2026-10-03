@@ -15,14 +15,14 @@ RUN addgroup -g ${GID} appuser && \
 
 # Application
 COPY app.py /app/app.py
+COPY backup_scheduler.py /app/backup_scheduler.py
 
-RUN mkdir -p /app/images /app/logs && \
+RUN mkdir -p /app/images /app/logs /app/backup && \
     chown -R appuser:appuser /app
 
 USER appuser
 EXPOSE 8000
 CMD ["python3", "-u", "app.py"]
-
 
 # NGINX
 FROM nginx:alpine AS nginx
