@@ -96,9 +96,9 @@ docker compose up -d --build
 | Змінна | За замовчуванням | Опис |
 |---|---|---|
 | `HOST_PORT` | — | Порт Nginx на хості. |
-| `DB_NAME` | `images_db` | Назва бази даних. |
-| `DB_USER` | `root_user` | Користувач бази. |
-| `DB_PASSWORD` | `123` (у `app.py`) | Пароль бази. |
+| `POSTGRES_NAME` | `images_db` | Назва бази даних. |
+| `POSTGRES_USER` | `root_user` | Користувач бази. |
+| `POSTGRES_PASSWORD` | `123` (у `app.py`) | Пароль бази. |
 | `DB_SCHEME` | `public` | Схема, у якій створюється таблиця `images`. |
 | `DB_PORT` | `5432` | Порт PostgreSQL. |
 | `MAX_FILE_SIZE` | `5` | Максимальний розмір файлу в МБ. |
@@ -187,7 +187,7 @@ curl -X DELETE http://localhost:8080/delete/12
 
 Сервіс `backup_scheduler` у нескінченному циклі:
 
-1. викликає `pg_dump` для бази `DB_NAME`;
+1. викликає `pg_dump` для бази `POSTGRES_NAME`;
 2. зберігає дамп у `BACKUP_DIR` з іменем `backup_YYYY-MM-DD_HHMMSS.sql`;
 3. у разі помилки видаляє неповний файл і пише причину в лог;
 4. чекає `BACKUP_INTERVAL_MINUTES` хвилин і повторює.

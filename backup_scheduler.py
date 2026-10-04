@@ -9,14 +9,14 @@ WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "backup.log"
 
-DB_HOST = "db"
-DB_PORT = int(os.environ.get("DB_PORT", 5432))
-DB_SCHEME = os.environ.get("DB_SCHEME", "public")
-DB_NAME = os.environ.get("DB_NAME", "images_db")
-DB_USER = os.environ.get("DB_USER", "root_user")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
+POSTGRES_HOST = "db"
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
+POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
+POSTGRES_NAME = os.environ.get("POSTGRES_NAME", "images_db")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD")
 
-BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backups"))
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "backups"))
 BACKUP_INTERVAL_MINUTES = int(os.environ.get("BACKUP_INTERVAL_MINUTES", 2))
 
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,8 +37,8 @@ def create_backup():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     backup_file = ( BACKUP_DIR / f"backup_{timestamp}.sql" )
     env = os.environ.copy()
-    env["PGPASSWORD"] = DB_PASSWORD or ""
-    command =[ "pg_dump", "-h", DB_HOST, "-p", str(DB_PORT), "-U", DB_USER, "-d", DB_NAME,]
+    env["PGPASSWORD"] = POSTGRES_PASSWORD or ""
+    command =[ "pg_dump", "-h", POSTGRES_HOST, "-p", str(POSTGRES_PORT), "-U", POSTGRES_USER, "-d", POSTGRES_NAME, ]
     logger.info( f"Creating backup: {backup_file}" )
     try:
         with backup_file.open("w", encoding="utf-8") as file:

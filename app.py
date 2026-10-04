@@ -25,14 +25,14 @@ START_DIR = WEB_DIR / "static"
 UPLOAD_DIR = WEB_DIR / "images"
 LOG_FILE = LOG_DIR / "app.log"
 
-DB_HOST = "db"
-DB_PORT = int(os.environ.get("DB_PORT", 5432))
-DB_SCHEME = os.environ.get("DB_SCHEME", "public")
-DB_NAME = os.environ.get("DB_NAME", "images_db")
-DB_USER = os.environ.get("DB_USER", "root_user")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "123")
+POSTGRES_HOST = "postgres"
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
+POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
+POSTGRES_NAME = os.environ.get("POSTGRES_NAME", "images_db")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
 
-ALLOWED_EXTENSIONS= os.environ.get("ALLOWED_EXTENSIONS", {"jpg", "png", "gif", "jpeg"})
+ALLOWED_EXTENSIONS= set(os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg").split(",") )
 MAX_FILE_SIZE = 1024 * 1024 * int(os.environ.get("MAX_FILE_SIZE", 5))
 ITEMS_PER_PAGE = 10
 
@@ -55,11 +55,11 @@ logger = logging.getLogger("AppLogger")
 # ---------------
 def get_db_connection() -> Connection:
     return psycopg.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        dbname=POSTGRES_NAME,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
     )
 
 
@@ -81,7 +81,7 @@ def wait_for_database():
 def create_table(connection: Connection):
     with connection.cursor() as cursor:
         sql_script = f"""
-        CREATE TABLE IF NOT EXISTS {DB_SCHEME}.images (
+        CREATE TABLE IF NOT EXISTS {POSTGRES_SCHEME}.images (
           id SERIAL PRIMARY KEY,
           filename TEXT NOT NULL,
           original_name TEXT NOT NULL,
@@ -99,7 +99,7 @@ def insert_image( connection: Connection, file_name: str, original_name: str, si
     try:
         with connection.cursor() as cursor:
             sql_script = f"""
-                INSERT INTO {DB_SCHEME}.images (
+                INSERT INTO {POSTGRES_SCHEME}.images (
                     filename,
                     original_name,
                     size,
@@ -127,7 +127,7 @@ def get_images( connection: Connection, page: int = 1):
             sql_script = f"""
                 SELECT
                     id, filename, original_name, size, file_type, upload_time
-                FROM {DB_SCHEME}.images
+                FROM {POSTGRES_SCHEME}.images
                 ORDER BY id DESC
                 OFFSET %s
                 LIMIT {ITEMS_PER_PAGE};
@@ -183,7 +183,7 @@ def get_image_filename( connection: Connection,image_id: int):
         with connection.cursor() as cursor:
             sql_script = f"""
                 SELECT filename
-                FROM {DB_SCHEME}.images
+                FROM {POSTGRES_SCHEME}.images
                 WHERE id = %s;
             """
             cursor.execute(sql_script, (image_id,) )
@@ -203,7 +203,7 @@ def del_image(connection: Connection, image_id: int):
             sql_script = None
             if image_id > 0:
                 sql_script = f"""
-                    DELETE FROM {DB_SCHEME}.images
+                    DELETE FROM {POSTGRES_SCHEME}.images
                     WHERE id = %s;
                 """
                 cursor.execute( sql_script, (image_id,) )
@@ -321,7 +321,7 @@ def get_file_ext(file_name: str):
 
 def _generate_unique_filename( file_name: str):
     ext = get_file_ext(file_name)
-    return (f"{uuid.uuid4().hex}{ext}")
+    return (f"{uuid.uuid4().hex}.{ext}")
 
 def download_file(full_filename,data):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -413,9 +413,11 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error( 404 )
             return None
 
-        files = extract_file_data(self)
-        if not files:
-            send_params(self,500,"No files provided")
+        try:
+            files = extract_file_data(self)
+        except ValueError as e:
+            logger.warning("Bad upload request: %s", e)
+            send_params(self, 400, str(e))  # для «слишком большой» лучше 413
             return None
 
         if not validate_files( self, files):
