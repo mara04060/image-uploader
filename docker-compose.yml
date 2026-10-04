@@ -8,7 +8,9 @@ services:
     environment:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
+      DB_SCHEME: ${DB_SCHEME}
       DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT}
     ports:
       - "${DB_PORT}:5432"
     volumes:
@@ -43,6 +45,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_SCHEME: ${DB_SCHEME}
       DB_PORT: ${DB_PORT}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE}
     volumes:
       - ./images:/app/images
       - ./logs:/app/logs
@@ -89,7 +92,6 @@ services:
       - "${HOST_PORT}:80"
     volumes:
       - ./images:/app/images:ro
-      - ./logs:/logs
     depends_on:
       - app
     networks:

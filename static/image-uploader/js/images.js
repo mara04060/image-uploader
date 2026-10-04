@@ -354,20 +354,38 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+if (
+        paginationData.has_previous === false &&
+        paginationData.has_next === false
+    ) {
 
-        /*
-         * Remove only old buttons/content.
-         */
+        pagination.style.display = 'none';
 
-        pagination.innerHTML = '';
+        return;
+    }
 
 
-        /*
-         * Add pagination class.
-         */
+    /*
+     * Show pagination when navigation
+     * is available.
+     */
 
-        pagination.className =
-            'pagination';
+    pagination.style.display = '';
+
+
+    /*
+     * Remove only old buttons/content.
+     */
+
+    pagination.innerHTML = '';
+
+
+    /*
+     * Add pagination class.
+     */
+
+    pagination.className =
+        'pagination';
 
 
         /* =====================================================
