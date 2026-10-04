@@ -46,9 +46,11 @@ services:
       DB_SCHEME: ${DB_SCHEME}
       DB_PORT: ${DB_PORT}
       MAX_FILE_SIZE: ${MAX_FILE_SIZE}
+      ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS}
     volumes:
       - ./images:/app/images
       - ./logs:/app/logs
+      - ./static:/app/static
     depends_on:
       db:
         condition: service_healthy
@@ -71,9 +73,12 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      DB_SCHEME: ${DB_SCHEME}
+      DB_PORT: ${DB_PORT}
       BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES}
+
     volumes:
-      - .${BACKUP_DIR}:${BACKUP_DIR}
+      - .${BACKUP_DIR}:/app/${BACKUP_DIR}
       - ./logs:/app/logs
     depends_on:
       db:

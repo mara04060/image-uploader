@@ -32,11 +32,12 @@ DB_NAME = os.environ.get("DB_NAME", "images_db")
 DB_USER = os.environ.get("DB_USER", "root_user")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "123")
 
-ALLOWED_EXTENSIONS = {"jpg", "png", "gif"}
+ALLOWED_EXTENSIONS= os.environ.get("ALLOWED_EXTENSIONS", {"jpg", "png", "gif", "jpeg"})
 MAX_FILE_SIZE = 1024 * 1024 * int(os.environ.get("MAX_FILE_SIZE", 5))
 ITEMS_PER_PAGE = 10
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +120,7 @@ def insert_image( connection: Connection, file_name: str, original_name: str, si
         raise
 
 def get_images( connection: Connection, page: int = 1):
+    page = page if page > 0 else 1
     offset = (page - 1) * ITEMS_PER_PAGE
     try:
         with connection.cursor() as cursor:
@@ -217,7 +219,23 @@ def del_image(connection: Connection, image_id: int):
 # Helpers
 # ---------------
 def _read_body(handler):
-    length = int(handler.headers.get("Content-Length", 0 ) )
+    content_length = handler.headers.get("Content-Length")
+
+    if content_length is None:
+        raise ValueError("Content-Length header is required")
+    try:
+        length = int(content_length)
+    except ValueError:
+        raise ValueError("Invalid Content-Length")
+
+    if length <= 0:
+        raise ValueError("Empty request body")
+    # Дозволяю завантажувати до 10 файлыв в одночас по 5 Мб кожен максимум!
+    if length > 10 * MAX_FILE_SIZE:
+        raise ValueError(
+            f"Request too large. Max size allowed is "
+            f"{MAX_FILE_SIZE // (1024 * 1024)}MB"
+        )
     return handler.rfile.read(length)
 
 def _extract_boundary(content_type: str):
@@ -271,13 +289,13 @@ def validate_files(self, files: list[tuple[str, bytes]]):
 def validate_file(file_name: str,data: bytes):
     # TODO вынести все сообщения как исключения.
     # Пока долго заморачиваться
-    file_extension = _get_file_ext(file_name)
+    file_extension = get_file_ext(file_name)
     if file_extension not in ALLOWED_EXTENSIONS:
         return (f"Непідтримуваний формат файлу: {file_extension}. доступны лише: {ALLOWED_EXTENSIONS}" )
 
     # Якщо робити таку перевірку то повинні бути справжні MIME code JPEG GIF PNG
     if not is_real_image(file_extension, data):
-        return (f"Image is not correct File. mime code is not Image! Warning Virus!")
+        return (f"Image is not correct File. mime code is not Image!")
 
     if len(data) > MAX_FILE_SIZE:
         return ( f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
@@ -290,17 +308,19 @@ def is_real_image(ext: str, data: bytes):
         with Image.open(BytesIO(data)) as img:
             fmt = img.format
             img.verify()
-            logger.info(f"Image is mime code {fmt} == {(ALLOWED_EXTENSIONS[ext]).upper()}")
-        return fmt.upper() == (ALLOWED_EXTENSIONS[ext]).upper()
+            logger.info(f"Image is mime code {fmt} == {ALLOWED_EXTENSIONS}")
+            if fmt.lower() in ALLOWED_EXTENSIONS:
+                return fmt
     except Exception:
         logger.warning(f"Could not determine mime code for {ext}" )
         return False
 
-def _get_file_ext(file_name: str) -> str:
+def get_file_ext(file_name: str):
+    logger.info("Extended = %s", Path(file_name).suffix.lower().strip(".") )
     return Path(file_name).suffix.lower().strip(".")
 
 def _generate_unique_filename( file_name: str):
-    ext = _get_file_ext(file_name)
+    ext = get_file_ext(file_name)
     return (f"{uuid.uuid4().hex}{ext}")
 
 def download_file(full_filename,data):
@@ -342,7 +362,9 @@ def send_params( self,status,message,file_names=None):
 
 
 def delete_file(file_name: str):
+    logger.info(f"Deleting {file_name}")
     if ( not isinstance(file_name, str) or not file_name.strip() ):
+        logger.error(f"File is Not Delete")
         raise ValueError( "Bad file name." )
 
     # Неможливо змынити директорію з якої видаляємо
@@ -404,7 +426,7 @@ class Handler(SimpleHTTPRequestHandler):
             download_file( file_name_new, data )
             try:
                 with get_db_connection() as connection:
-                    insert_image( connection,file_name_new,file_name,len(data),_get_file_ext(file_name_new))
+                    insert_image(connection, file_name_new, file_name, len(data), get_file_ext(file_name_new))
             except psycopg.Error as e:
                 logger.error("DB error, rollback file %s: %s",file_name,  e )
                 delete_file(file_name_new)

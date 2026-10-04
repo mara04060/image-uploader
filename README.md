@@ -44,20 +44,31 @@ Dockerfile багатоетапний: цілі (`target`) `app` (Python 3.12 Al
 ```
 
 ## Запуск
-
+0. Створити директорії в межах склонованого проекту: (Linux* - обовёязково)
+```cmd
+mkdir -p images logs backups
+sudo chown -R 1000:1000 images logs backups
+chmod 755 images logs backups
+```
 1. Створіть файл `.env` поруч із `docker-compose.yml`:
 
 ```env
-HOST_PORT=8080
+HOST_NGINX=localhost
 
+HOST_PORT=8080
+APP_PORT=8000
+
+DB_PORT=5432
+DB_SCHEME=public
 DB_NAME=images_db
 DB_USER=root_user
-DB_PASSWORD=change_me
-DB_SCHEME=public
-DB_PORT=5432
+DB_PASSWORD=passw123
+
+ALLOWED_EXTENSIONS={"jpg", "png", "gif", "jpeg"}
+MAX_FILE_SIZE=5
 
 BACKUP_DIR=/backups
-BACKUP_INTERVAL_MINUTES=60
+BACKUP_INTERVAL_MINUTES=5
 
 # Необов'язково (значення за замовчуванням 1000)
 UID=1000
