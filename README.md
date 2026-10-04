@@ -54,20 +54,19 @@ chmod 755 images logs backups
 
 ```env
 HOST_NGINX=localhost
-
 HOST_PORT=8080
 APP_PORT=8000
 
-DB_PORT=5432
-DB_SCHEME=public
-DB_NAME=images_db
-DB_USER=root_user
-DB_PASSWORD=passw123
+POSTGRES_PORT=5432
+POSTGRES_SCHEME=public
+POSTGRES_NAME=images_db
+POSTGRES_USER=user
+POSTGRES_PASSWORD=passw
 
-ALLOWED_EXTENSIONS={"jpg", "png", "gif", "jpeg"}
+ALLOWED_EXTENSIONS=jpg,png,gif,jpeg
 MAX_FILE_SIZE=5
 
-BACKUP_DIR=/backups
+BACKUP_DIR=backups
 BACKUP_INTERVAL_MINUTES=5
 
 # Необов'язково (значення за замовчуванням 1000)
