@@ -9,7 +9,7 @@ WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "backup.log"
 
-POSTGRES_HOST = "db"
+POSTGRES_HOST = "postgres"
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
 POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
 POSTGRES_NAME = os.environ.get("POSTGRES_NAME", "images_db")
