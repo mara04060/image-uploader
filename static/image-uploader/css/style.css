@@ -225,7 +225,7 @@ body {
     margin: 0 auto;
     padding: 20px;
     border-radius: 8px;
-    margin-bottom: 292px;
+    margin-bottom: 20px;
 }
 
 /* Common style for a row (both header and list item) */
@@ -314,4 +314,146 @@ body {
     /* REMOVE BACKGROUND ON HOVER */
     opacity: 0.7;
     /* Make the icon semi-transparent for user feedback */
+}
+/* =========================================================
+ * Pagination
+ * ========================================================= */
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 30px;
+    margin-bottom: 30px;
+}
+
+
+.pagination__button {
+    min-width: 100px;
+    padding: 10px 18px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #111827;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+
+    cursor: pointer;
+
+    transition:
+        background-color 0.2s ease,
+        border-color 0.2s ease,
+        color 0.2s ease,
+        opacity 0.2s ease;
+}
+
+
+
+/* =========================================================
+ * Pagination
+ * ========================================================= */
+
+#pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin: 24px auto 32px;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+
+/* =========================================================
+ * Pagination button
+ * ========================================================= */
+
+.pagination__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 90px;
+    min-height: 38px;
+    padding: 8px 16px;
+    border: 1px solid #4f46e5;
+    border-radius: 6px;
+    background: #4f46e5;
+    color: #ffffff;
+
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+
+    line-height: 1;
+
+    cursor: pointer;
+
+    box-sizing: border-box;
+
+    transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease,
+        opacity 0.15s ease;
+}
+
+
+/* =========================================================
+ * Active / clickable button
+ * ========================================================= */
+
+.pagination__button--active {
+    background: #4f46e5;
+    border-color: #4f46e5;
+
+    color: #ffffff;
+
+    cursor: pointer;
+}
+
+
+/* =========================================================
+ * Active button hover
+ * ========================================================= */
+
+.pagination__button--active:hover:not(:disabled) {
+    background: #4338ca;
+    border-color: #4338ca;
+}
+
+
+/* =========================================================
+ * Disabled button
+ * ========================================================= */
+
+.pagination__button--disabled,
+.pagination__button:disabled {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+    color: #9ca3af;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
+
+/* =========================================================
+ * Page number
+ * ========================================================= */
+
+.pagination__page {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 100px;
+    min-height: 38px;
+    padding: 0 10px;
+    color: #333333;
+    font-family: inherit;    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+    text-align: center;
+    box-sizing: border-box;
 }
