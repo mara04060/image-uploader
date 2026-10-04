@@ -52,15 +52,15 @@ def create_backup():
             )
 
         if result.returncode != 0:
-            logger.info( "Backup failed:" )
-            logger.info(result.stderr)
+            logger.error( "Backup failed:" )
+            logger.error(result.stderr)
             backup_file.unlink(missing_ok=True)
             return False
 
         logger.info(f"Backup successfully created: {backup_file}" )
         return True
     except Exception as e:
-        logger.info( f"Unexpected backup error: {e}" )
+        logger.error( f"Unexpected backup error: {e}" )
         backup_file.unlink( missing_ok=True )
         return False
 
