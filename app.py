@@ -227,7 +227,7 @@ def _generate_unique_filename(file_name: str) -> str:
     path = Path(safe_name)
     return f"{uuid.uuid4().hex}{ext}"
 
-def save_file(full_filename, data):
+def download_file(full_filename, data):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with open(UPLOAD_DIR / full_filename, "wb") as file:
         file.write(data)
@@ -325,9 +325,14 @@ class Handler(SimpleHTTPRequestHandler):
             for file_name, data in files:
                 logger.info(f"file name = {file_name} --> start downloading")
                 file_name_new = _generate_unique_filename(file_name)
-                save_file(file_name_new, data)
+                download_file(file_name_new, data)
                 file_extension = Path(file_name_new).suffix.lower()
-                insert_image(connection, file_name_new, file_name, len(data), file_extension)
+                try:
+                    insert_image(connection, file_name_new, file_name, len(data), file_extension)
+                except psycopg.Error as e:
+                    logger.error("DB error, rollback file %s: %s", file_name, e)
+                    delete_file(file_name_new)
+                    send_params(self, 500, "Database error File Not Save")
                 logger.info(f"File {file_name_new}  downloaded!")
                 file_names.append(file_name_new)
             send_params(self, 200, "Файли успішно завантажені", file_names)
