@@ -16,12 +16,12 @@
 
 ## Архітектура
 
-| Сервіс | Опис |
-|---|---|
-| `db` | PostgreSQL 18, дані зберігаються в томі `postgres-data`. Має healthcheck (`pg_isready`). |
-| `app` | Python-бекенд (`app.py`) на порту `8000`, `ThreadingHTTPServer`. |
+| Сервіс             | Опис |
+|--------------------|---|
+| `postgres`         | PostgreSQL 18, дані зберігаються в томі `postgres-data`. Має healthcheck (`pg_isready`). |
+| `app`              | Python-бекенд (`app.py`) на порту `8000`, `ThreadingHTTPServer`. |
 | `backup_scheduler` | Скрипт `backup_scheduler.py`, який через задані інтервали робить `pg_dump`. |
-| `nginx` | Reverse proxy, віддає статику (`static/`) та зображення (`/app/images`, лише читання). Публікується на `${HOST_PORT}`. |
+| `nginx`            | Reverse proxy, віддає статику (`static/`) та зображення (`/app/images`, лише читання). Публікується на `${HOST_PORT}`. |
 
 Усі сервіси працюють в одній внутрішній мережі `app-network`. Сервіси `app` і `backup_scheduler` стартують лише після того, як база пройшла healthcheck.
 
@@ -104,7 +104,7 @@ docker compose down -v --rmi local
 | `DB_SCHEME`               | `public` | Схема, у якій створюється таблиця `images`. |
 | `DB_PORT`                 | `5432` | Порт PostgreSQL. |
 | `MAX_FILE_SIZE`           | `5` | Максимальний розмір файлу в МБ. |
-| `BACKUP_DIR`              | `/backups` | Каталог для резервних копій усередині контейнера (і на хості відносно проєкту). |
+| `BACKUP_DIR`              | `backups` | Каталог для резервних копій усередині контейнера (і на хості відносно проєкту). |
 | `BACKUP_INTERVAL_MINUTES` | `2` | Інтервал між резервними копіями, хв. |
 
 Хост бази даних зафіксовано як `db` (ім'я сервісу в Compose).
@@ -209,7 +209,7 @@ curl -X DELETE http://localhost:8080/delete/12
 docker compose exec -T postgres pg_dump -U $DB_USER $DB_NAME > backups/backup_$(date +%F_%H%M%S).sql
 ```
 Відновлення з копії:
-
+приклад:
 ```bash
 docker compose exec -T postgres psql -U $DB_USER -d $DB_NAME < backups/backup_2026-10-03_120000.sql
 ```
