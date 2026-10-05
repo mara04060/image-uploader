@@ -204,7 +204,7 @@ def del_image(connection: Connection, image_id: int):
             if image_id > 0:
                 sql_script = f"""
                     DELETE FROM {POSTGRES_SCHEME}.images
-                    WHERE id = %s RETURNING filename;
+                    WHERE id = %s RETURNING original_name;
                 """
                 cursor.execute( sql_script, (image_id,) )
                 row = cursor.fetchone()
