@@ -204,13 +204,13 @@ def del_image(connection: Connection, image_id: int):
             if image_id > 0:
                 sql_script = f"""
                     DELETE FROM {POSTGRES_SCHEME}.images
-                    WHERE id = %s;
+                    WHERE id = %s RETURNING filename;
                 """
-                cursor.execute( sql_script, (image_id,) )
+                filename = cursor.execute( sql_script, (image_id,) )[0]
         connection.commit()
         logger.debug("SQL: %s",sql_script )
         logger.info("SQL: Delete image id = %s",image_id )
-        return True
+        return filename
     except Exception:
         connection.rollback()
         raise
@@ -492,7 +492,7 @@ class Handler(SimpleHTTPRequestHandler):
                 delete_file(delete_file_name )
                 logger.info( f"Remove file: {delete_file_name}" )
                 logger.info("DELETE image id={image_id}" )
-                del_image( connection, image_id)
+                filename_del = del_image( connection, image_id)
         except ValueError as e:
             logger.warning(e)
             send_params( self,404, str(e) )
@@ -501,7 +501,7 @@ class Handler(SimpleHTTPRequestHandler):
             logger.exception(f"Database error during DELETE: {e}" )
             send_params( self,500,"Database error" )
             return None
-        send_params( self,200,f"Image deleted ID: {image_id}" )
+        send_params( self,200,f"Image deleted ID: {image_id}", filename_del )
 
 # ---------------
 # Start Server
