@@ -142,7 +142,7 @@ curl -F "file=@photo.jpg" -F "file=@logo.png" http://localhost:8080/upload
       "filename": "3f2a...c1.jpg",
       "original_name": "photo.jpg",
       "size": 204800,
-      "file_type": ".jpg",
+      "file_type": "jpeg",
       "upload_time": "2026-10-03 12:00:00"
     }
   ],
@@ -195,12 +195,12 @@ curl -X DELETE http://localhost:8080/delete/12
 
 За необхіднстю зробити BackUp:
 ```bash
-docker compose exec -T db pg_dump -U $DB_USER $DB_NAME > backups/backup_$(date +%F_%H%M%S).sql
+docker compose exec -T postgres pg_dump -U $DB_USER $DB_NAME > backups/backup_$(date +%F_%H%M%S).sql
 ```
 Відновлення з копії:
 
 ```bash
-docker compose exec -T db psql -U $DB_USER -d $DB_NAME < backups/backup_2026-10-03_120000.sql
+docker compose exec -T postgres psql -U $DB_USER -d $DB_NAME < backups/backup_2026-10-03_120000.sql
 ```
 
 ## Логи
@@ -211,7 +211,7 @@ docker compose exec -T db psql -U $DB_USER -d $DB_NAME < backups/backup_2026-10-
 
 ## Безпека та валідація
 
-- Дозволені лише розширення `.jpg`, `.png`, `.gif`.
+- Дозволені лише розширення `jpg`, `png`, `gif`.
 - Обмеження розміру файлу (`MAX_FILE_SIZE`).
 - Файли зберігаються під випадковими UUID-іменами, оригінальне ім'я лише в базі.
 - Під час видалення перевіряється, що ім'я файлу не містить шляху (`../`, `/`, піддиректорій), а фінальний шлях лежить у межах `images/`.

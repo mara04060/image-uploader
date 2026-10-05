@@ -12,7 +12,7 @@ LOG_FILE = LOG_DIR / "backup.log"
 POSTGRES_HOST = "postgres"
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
 POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
-POSTGRES_NAME = os.environ.get("POSTGRES_NAME", "images_db")
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD")
 
@@ -38,7 +38,7 @@ def create_backup():
     backup_file = ( BACKUP_DIR / f"backup_{timestamp}.sql" )
     env = os.environ.copy()
     env["PGPASSWORD"] = POSTGRES_PASSWORD or ""
-    command =[ "pg_dump", "-h", POSTGRES_HOST, "-p", str(POSTGRES_PORT), "-U", POSTGRES_USER, "-d", POSTGRES_NAME, ]
+    command =[ "pg_dump", "-h", POSTGRES_HOST, "-p", str(POSTGRES_PORT), "-U", POSTGRES_USER, "-d", POSTGRES_DB, ]
     logger.info( f"Creating backup: {backup_file}" )
     try:
         with backup_file.open("w", encoding="utf-8") as file:

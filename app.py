@@ -28,7 +28,7 @@ LOG_FILE = LOG_DIR / "app.log"
 POSTGRES_HOST = "postgres"
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
 POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
-POSTGRES_NAME = os.environ.get("POSTGRES_NAME", "images_db")
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
 
@@ -57,7 +57,7 @@ def get_db_connection() -> Connection:
     return psycopg.connect(
         host=POSTGRES_HOST,
         port=POSTGRES_PORT,
-        dbname=POSTGRES_NAME,
+        dbname=POSTGRES_DB,
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD,
     )
@@ -428,7 +428,7 @@ class Handler(SimpleHTTPRequestHandler):
             download_file( file_name_new, data )
             try:
                 with get_db_connection() as connection:
-                    insert_image(connection, file_name_new, file_name, len(data), get_file_ext(file_name_new))
+                    insert_image(connection, file_name_new, file_name, len(data), get_file_ext(file_name))
             except psycopg.Error as e:
                 logger.error("DB error, rollback file %s: %s",file_name,  e )
                 delete_file(file_name_new)

@@ -6,7 +6,7 @@ services:
     restart: always
     shm_size: 128mb
     environment:
-      POSTGRES_NAME: ${POSTGRES_NAME}
+      POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_SCHEME: ${POSTGRES_SCHEME}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -17,10 +17,7 @@ services:
       - postgres-data:/var/lib/postgresql
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_NAME}"
-        ]
+        ["CMD-SHELL", "pg_isready"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -40,7 +37,7 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       APP_PORT: ${APP_PORT}
-      POSTGRES_NAME: ${POSTGRES_NAME}
+      POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_SCHEME: ${POSTGRES_SCHEME}
@@ -70,7 +67,7 @@ services:
     command: ["python3", "-u", "backup_scheduler.py"]
     environment:
       BACKUP_DIR: ${BACKUP_DIR}
-      POSTGRES_NAME: ${POSTGRES_NAME}
+      POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_SCHEME: ${POSTGRES_SCHEME}
