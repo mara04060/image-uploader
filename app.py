@@ -32,7 +32,7 @@ POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
 
-ALLOWED_EXTENSIONS= set(os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg").split(",") )
+ALLOWED_EXTENSIONS= set(os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg").strip().lower().split(",") )
 MAX_FILE_SIZE = 1024 * 1024 * int(os.environ.get("MAX_FILE_SIZE", 5))
 ITEMS_PER_PAGE = 10
 
@@ -111,7 +111,7 @@ def insert_image( connection: Connection, file_name: str, original_name: str, si
             cursor.execute( sql_script,
                 (file_name, original_name, size, file_type ) )
             result = cursor.fetchone()
-        connection.commit()
+        # connection.commit()
         logger.info("Insert data %s, %s, %s, %s",file_name, original_name, size, file_type )
         logger.debug("SQL: %s",sql_script )
         return result[0]
@@ -128,7 +128,7 @@ def get_images( connection: Connection, page: int = 1):
                 SELECT
                     id, filename, original_name, size, file_type, upload_time
                 FROM {POSTGRES_SCHEME}.images
-                ORDER BY id DESC
+                ORDER BY upload_time DESC
                 OFFSET %s
                 LIMIT {ITEMS_PER_PAGE};
             """
@@ -198,6 +198,9 @@ def get_image_filename( connection: Connection,image_id: int):
         raise
 
 def del_image(connection: Connection, image_id: int):
+    if image_id <= 0:
+        return None
+
     try:
         with connection.cursor() as cursor:
             sql_script = None
@@ -265,7 +268,7 @@ def _parse_multipart_body( body: bytes,boundary: bytes) -> list[tuple[str, bytes
 
         # Это спасибо Макс подсказал.. реально работает...
         filename_match = re.search(r'filename="([^"]+)"',headers_raw )
-        if filename_match and data:
+        if filename_match:
             filename = filename_match.group(1)
             extracted_files.append( (filename, data ) )
     return extracted_files
@@ -280,15 +283,30 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
     return _parse_multipart_body( body, boundary )
 
 def validate_files(self, files: list[tuple[str, bytes]]):
-    for file_name, data in files:
-        error_message = validate_file( file_name, data )
-        if error_message:
-            logger.warning( f"Rejected file '{file_name}': {error_message}" )
-            send_params(self,400,error_message,file_name)
-            return False
-    return True
+    saved = []
+    try:
+        for file_name, data in files:
+            new_name = f"{uuid.uuid4().hex}.{get_file_ext(file_name)}"
+            download_file(new_name, data)
+            saved.append((new_name, file_name, len(data)))
+        with get_db_connection() as connection:
+            for new_name, original, size in saved:
+                insert_image(connection, new_name, original, size, get_file_ext(original))
+    except (psycopg.Error, OSError) as e:
+        logger.error("Upload failed, rolling back %d file(s): %s", len(saved), e)
+        for new_name, *_ in saved:
+            try:
+                delete_file(new_name)
+            except Exception:
+                logger.exception("Cleanup failed for %s", new_name)
+        send_params(self, 500, "Files not saved")
+        return None
+    send_params(self, 200, "Файли успішно завантажені", [n for n, *_ in saved])
 
 def validate_file(file_name: str,data: bytes):
+    if not data: return "Empty file"
+    if len(data) > MAX_FILE_SIZE:
+        return ( f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
     # TODO вынести все сообщения как исключения.
     # Пока долго заморачиваться
     file_extension = get_file_ext(file_name)
@@ -299,9 +317,6 @@ def validate_file(file_name: str,data: bytes):
     if not is_real_image(file_extension, data):
         return (f"Image is not correct File. mime code is not Image!")
 
-    if len(data) > MAX_FILE_SIZE:
-        return ( f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
-
     return None
 
 # Перевіряє імідж з внутрішнього боку
@@ -310,7 +325,7 @@ def is_real_image(ext: str, data: bytes):
         with Image.open(BytesIO(data)) as img:
             fmt = img.format
             img.verify()
-            logger.info(f"Image is mime code {fmt} == {ALLOWED_EXTENSIONS}")
+            logger.info(f"Image is mime code {fmt}")
             if fmt.lower() in ALLOWED_EXTENSIONS:
                 return fmt
     except Exception:
@@ -408,7 +423,7 @@ class Handler(SimpleHTTPRequestHandler):
     # Upload POST
     # ---------------
     def do_POST(self):
-        file_names: set = []
+        file_names: list = []
         if self.path != "/upload":
             logger.warning(f"Bad route {self.path}" )
             # принципово сторінку а не JSON
@@ -422,6 +437,9 @@ class Handler(SimpleHTTPRequestHandler):
             send_params(self, 400, str(e))  # для «слишком большой» лучше 413
             return None
 
+        if not files:
+            send_params(self, 400, "No files provided")
+            return None
         if not validate_files( self, files):
             return None
         for file_name, data in files:
