@@ -83,7 +83,7 @@ $function$;
 
 CREATE OR REPLACE FUNCTION public.get_images(
     p_page      INTEGER DEFAULT 1,
-    p_page_size INTEGER DEFAULT 20
+    p_page_size INTEGER DEFAULT 10
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -95,15 +95,10 @@ DECLARE
     v_offset    BIGINT;
     v_result    JSONB;
 BEGIN
-    v_page := GREATEST(COALESCE(p_page, 1), 1);
+    v_page := COALESCE(p_page, 1);
 
-    v_page_size := LEAST(
-        GREATEST(COALESCE(p_page_size, 20), 1),
-        100
-    );
-
+    v_page_size := COALESCE(p_page_size, 10);
     v_offset := (v_page::BIGINT - 1) * v_page_size;
-
     SELECT COALESCE(
         jsonb_agg(
             to_jsonb(page_rows)
@@ -121,7 +116,7 @@ BEGIN
             file_type,
             upload_time
         FROM public.images
-        ORDER BY upload_time DESC, id DESC
+        ORDER BY upload_time DESC
         LIMIT v_page_size
         OFFSET v_offset
     ) AS page_rows;
@@ -137,7 +132,7 @@ $function$;
 
 CREATE OR REPLACE FUNCTION public.get_pagination(
     p_page      INTEGER DEFAULT 1,
-    p_page_size INTEGER DEFAULT 20
+    p_page_size INTEGER DEFAULT 10
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -152,7 +147,7 @@ BEGIN
     v_page := GREATEST(COALESCE(p_page, 1), 1);
 
     v_page_size := LEAST(
-        GREATEST(COALESCE(p_page_size, 20), 1),
+        GREATEST(COALESCE(p_page_size, 10), 1),
         100
     );
 
@@ -254,7 +249,7 @@ RETURNS BOOLEAN
 LANGUAGE plpgsql
 AS $function$
 DECLARE
-    v_deleted INTEGER;
+    v_original_name TEXT;
 BEGIN
     IF p_image_id IS NULL OR p_image_id <= 0 THEN
         RAISE EXCEPTION 'image_id must be positive'
@@ -262,11 +257,10 @@ BEGIN
     END IF;
 
     DELETE FROM public.images
-    WHERE id = p_image_id;
+    WHERE id = p_image_id RETURNING original_name
+    INTO v_original_name;
 
-    GET DIAGNOSTICS v_deleted = ROW_COUNT;
-
-    RETURN v_deleted > 0;
+    RETURN v_original_name;
 END;
 $function$;
 
@@ -312,6 +306,5 @@ TO PUBLIC;
 GRANT EXECUTE ON FUNCTION
     public.delete_image(BIGINT)
 TO PUBLIC;
-
 
 COMMIT;

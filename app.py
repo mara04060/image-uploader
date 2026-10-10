@@ -8,6 +8,7 @@ from functools import wraps
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, parse_qs
 
 import psycopg
 from psycopg import Connection
@@ -128,6 +129,7 @@ def db_function( connection: Connection, function_name: str, *args: Any,) -> Any
     except Exception:
         connection.rollback()
         raise
+
 # execute only start. create function and Create table
 def execute_sql_file( connection: Connection, sql_file='install.sql') -> None:
     file_path = Path(sql_file)
@@ -151,13 +153,18 @@ def get_image_filename(connection: Connection, image_id: int,) -> str | None:
     return db_function( connection,f"{POSTGRES_SCHEME}.get_image_filename",image_id,)
 
 def insert_image(connection: Connection, file_name: str, original_name: str, size: int, file_type: str,) -> int:
-    result = db_function(
-        connection,f"{POSTGRES_SCHEME}.create_image",file_name, original_name, size, file_type,)
+    result = db_function(connection,f"{POSTGRES_SCHEME}.create_image",file_name, original_name, size, file_type,)
     connection.commit()
     return result
 
+def get_images(connection: Connection, page: int = 1):
+    return db_function(connection, f"{POSTGRES_SCHEME}.get_images", page, ITEMS_PER_PAGE)
+
 def get_pagination( connection: Connection, page: int = 1,) -> dict:
     return db_function( connection,f"{POSTGRES_SCHEME}.get_pagination",page, ITEMS_PER_PAGE,)
+
+def delete_image( connection: Connection, image_id: int = 1):
+    return db_function(connection, f"{POSTGRES_SCHEME}.delete_image", image_id)
 
 # Request helpers
 def _read_body(handler):
@@ -308,39 +315,52 @@ def validate_files( files,):
 
 def validate_uploaded_files(func):
     @wraps(func)
-    def wrapper(handler):
-        files = extract_file_data(handler)
-        return func(handler, validate_files(files))
+    def wrapper(self):
+        files = extract_file_data(self)
+        return func(self, validate_files(files))
     return wrapper
 
 
 def handle_upload_errors(func):
     @wraps(func)
-    def wrapper(handler):
+    def wrapper(self):
         try:
-            return func(handler)
+            return func(self)
 
         except FileValidationError as e:
             logger.warning("File validation failed: %s",e,)
-            json_response(handler,400,str(e),)
+            send_params(self,400,str(e),)
 
         except MultipartError as e:
             logger.warning("Multipart processing failed: %s",e, )
-            json_response(handler,400,str(e),)
+            send_params(self,400,str(e),)
 
         except RequestError as e:
             logger.warning("Request error: %s",e,)
-            json_response(handler,400,str(e),)
+            send_params(self,400,str(e),)
 
         except FileSaveError as e:
             logger.error("File save error: %s",e,)
-            json_response(handler,500,str(e),)
+            send_params(self,500,str(e),)
 
         except Exception:
             logger.exception("Unexpected server error")
-            json_response(handler,500,"Internal server error",)
+            send_params(self,500,"Internal server error",)
     return wrapper
 
+def get_page(params) :
+    page_values = params.get("page", ["1"])
+
+    if len(page_values) != 1:
+        raise ValueError("Parameter 'page' must be specified only once")
+    try:
+        page = int(page_values[0])
+    except (ValueError, TypeError):
+        raise ValueError("Parameter 'page' must be an integer") from None
+
+    if page < 1:
+        raise ValueError("Parameter 'page' must be greater than zero")
+    return page
 
 # File saving
 def save_file(file_name: str,data: bytes,):
@@ -357,35 +377,94 @@ def save_file(file_name: str,data: bytes,):
     logger.info("Saved file '%s'",file_name,)
 
 
-# HTTP response
-def json_response(handler,status: int,message: str,file_names=None):
-    response_data = {"status": status,"message": message,"file": file_names,}
-    try:
-        response_body = json.dumps(response_data,ensure_ascii=False,).encode("utf-8")
-        handler.send_response(status)
-        handler.send_header("Content-Type","application/json; charset=utf-8",)
-        handler.send_header("Content-Length",str(len(response_body)),)
-        handler.end_headers()
-        handler.wfile.write(response_body)
+# JSON
+def send_params(self,status,message,file_names=None):
+    send_json_dict( self,
+        {"status": status,
+            "message": message,
+            "file": file_names
+        }
+    )
 
-    except OSError:
-        logger.exception("Failed to send HTTP response")
+def send_json_dict(self, data):
+    status = int( data.get("status",200) )
+    if 100 < status < 600:
+        self.send_response(status)
+        _send_json(self,data)
+    return None
+
+def _send_json(self, data):
+    try:
+        response_body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_header("Content-type","application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(response_body)) )
+        self.end_headers()
+        self.wfile.write( response_body )
+        logger.info(f"Send JSON {data}")
+    except OSError as e:
+        logger.exception(f"Failed to send HTTP response. {e}")
 
 
 # Upload processing
 @handle_upload_errors
 @validate_uploaded_files
-def upload_files(handler, files,):
+def upload_files(self, files,):
     file_names: list[str] = []
-    for file_name, original_name, ext_file, file_size, data in files:
-        logger.info("Starting upload of '%s'",file_name,)
-        save_file(file_name, data)
-        logger.info(f"Insert in DB: {file_name}, {original_name}, {file_size}, {ext_file} ", )
-        insert_image(get_db_connection(), file_name, original_name, file_size, ext_file )
-        file_names.append(file_name)
-        logger.info("File '%s' uploaded successfully",file_name,)
+    with get_db_connection() as connection:
+        for file_name, original_name, ext_file, file_size, data in files:
+            logger.info("Starting upload of '%s -> as %s'",original_name, file_name)
+            save_file(file_name, data)
+            logger.info(f"Insert in DB: {file_name}, {original_name}, {file_size}, {ext_file} ", )
+            insert_image(connection, file_name, original_name, file_size, ext_file )
+            file_names.append(file_name)
+            logger.info("File '%s' uploaded successfully",file_name,)
+    send_params(self,200,"Файли успішно завантажені", file_names,)
 
-    json_response(handler,200,"Файли успішно завантажені", file_names,)
+def get_files_json(self, parsed):
+    try:
+        page = get_page(parse_qs(parsed.query))
+        logger.info(f"Page is %s", page)
+    except ValueError as e:
+        logger.exception(f"Invalid query parameters {e}")
+        raise e
+
+    try:
+        logger.info(f"Page is %s", page)
+        with get_db_connection() as connection:
+            json_obj = {
+                "staus": 200,
+                "items": get_images(connection, page),
+                "pagination": get_pagination(connection, page)
+            }
+        logger.info(f"JSON obj: {json_obj}")
+        send_json_dict(self, json_obj)
+    except psycopg.Error as e:
+        logger.exception("Database error during GET /images-list")
+        send_params(self, 500, "Database error")
+    return
+
+def delete_image_file(self, image_id):
+    try:
+        with get_db_connection() as connection:
+            delete_file_name = get_image_filename(connection, image_id)
+            if not delete_file_name:
+                send_params(self, 404, f"Image not found ID:{image_id}")
+                return None
+            logger.info(f"DELETE file: {delete_file_name}")
+            delete_image_file(self, image_id)
+            logger.info(f"Remove file: {delete_file_name}")
+            logger.info("DELETE image id={image_id}")
+            filename_del = delete_image(connection, image_id)
+    except ValueError as e:
+        logger.warning(e)
+        send_params(self, 404, str(e))
+        return None
+    except psycopg.Error as e:
+        logger.exception(f"Database error during DELETE: {e}")
+        send_params(self, 500, "Database error")
+        return None
+    send_params(self, 200, f"Image deleted ID: {image_id}", filename_del)
 
 
 # HTTP Handler
@@ -393,6 +472,9 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__( *args, directory=str(START_DIR),**kwargs,)
 
+    # ---------------
+    # POST Images (Upload)
+    # ---------------
     def do_POST(self):
         if (self.path != "/upload"):
             logger.warning("Unknown route: %s",self.path,)
@@ -400,6 +482,30 @@ class Handler(SimpleHTTPRequestHandler):
             return
         upload_files(self)
 
+    # ---------------
+    # Get Images JSON
+    # ---------------
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path != "/images-list":
+            logger.warning(f"GET {parsed.path} --> 404")
+            send_params(self,404, "Page not found")
+            return None
+        get_files_json(self, parsed)
+
+    # ---------------
+    # DELETE image
+    # ---------------
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        match = re.fullmatch(r"/delete/(\d+)", parsed.path)
+        if not match:
+            logger.warning(f"DELETE {parsed.path} --> 404")
+            send_params(self, 404, "File not found")
+            return None
+
+        image_id = int(match.group(1))
+        delete_image_file(self, image_id)
 
 # Server
 def create_server() -> ThreadingHTTPServer:
