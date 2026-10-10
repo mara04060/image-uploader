@@ -245,7 +245,7 @@ $function$;
 CREATE OR REPLACE FUNCTION public.delete_image(
     p_image_id BIGINT
 )
-RETURNS BOOLEAN
+RETURNS TEXT
 LANGUAGE plpgsql
 AS $function$
 DECLARE
@@ -259,7 +259,6 @@ BEGIN
     DELETE FROM public.images
     WHERE id = p_image_id RETURNING original_name
     INTO v_original_name;
-
     RETURN v_original_name;
 END;
 $function$;

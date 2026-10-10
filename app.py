@@ -450,21 +450,25 @@ def delete_image_file(self, image_id):
             delete_file_name = get_image_filename(connection, image_id)
             if not delete_file_name:
                 send_params(self, 404, f"Image not found ID:{image_id}")
-                return None
-            logger.info(f"DELETE file: {delete_file_name}")
-            delete_image_file(self, image_id)
-            logger.info(f"Remove file: {delete_file_name}")
-            logger.info("DELETE image id={image_id}")
+                return
+
+            file_path = UPLOAD_DIR / Path(delete_file_name).name
+            try:
+                file_path.unlink()
+                logger.info("File removed: %s", delete_file_name)
+            except FileNotFoundError:
+                logger.warning("File not found on disk: %s", delete_file_name)
+            except OSError:
+                logger.exception("Failed to remove file: %s", delete_file_name)
+            logger.info("Starting deletion of image ID=%s, file=%s",image_id, delete_file_name)
             filename_del = delete_image(connection, image_id)
-    except ValueError as e:
-        logger.warning(e)
-        send_params(self, 404, str(e))
-        return None
-    except psycopg.Error as e:
-        logger.exception(f"Database error during DELETE: {e}")
+            if not filename_del:
+                send_params(self, 404, f"Image not found ID:{image_id}")
+                return
+            send_params( self,200,f"Image deleted ID: {image_id}", filename_del)
+    except psycopg.Error:
+        logger.exception("Database error during DELETE image ID=%s",image_id)
         send_params(self, 500, "Database error")
-        return None
-    send_params(self, 200, f"Image deleted ID: {image_id}", filename_del)
 
 
 # HTTP Handler
