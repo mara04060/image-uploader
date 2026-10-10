@@ -1,13 +1,19 @@
 import json
 import logging
+import os
 import re
+import time
 import uuid
 from functools import wraps
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+from typing import Any
+
+import psycopg
+from psycopg import Connection
 
 HOST = "0.0.0.0"
-PORT = 8000
+APP_PORT= 8000
 
 WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
@@ -15,8 +21,16 @@ START_DIR = WEB_DIR / "static"
 UPLOAD_DIR = WEB_DIR / "images"
 LOG_FILE = LOG_DIR / "app.log"
 
-ALLOWED_EXTENSIONS = {".jpg", ".png", ".gif"}
-MAX_FILE_SIZE = 5 * 1024 * 1024
+POSTGRES_HOST = "postgres"
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
+POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public")
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
+
+ALLOWED_EXTENSIONS = set(os.environ.get("ALLOWED_EXTENSIONS", "jpg, png, gif").lower().strip().split(","))
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 5)) * 1024 * 1024
+ITEMS_PER_PAGE = 10
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -30,7 +44,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("AppLogger")
-
 
 # Custom exceptions
 class AppError(Exception):
@@ -52,6 +65,99 @@ class FileValidationError(AppError):
 class FileSaveError(AppError):
     pass
 
+
+
+class ImageError(Exception):
+    """Базовая ошибка обработки изображения."""
+
+
+class ImageValidationError(ImageError):
+    """Файл не прошёл валидацию."""
+
+
+class ImageFileWriteError(ImageError):
+    """Не удалось записать файл на диск."""
+
+
+class ImageFileDeleteError(ImageError):
+    """Не удалось удалить файл с диска."""
+
+
+class ImageDatabaseInsertError(ImageError):
+    """Не удалось создать запись в БД."""
+
+
+class ImageDatabaseDeleteError(ImageError):
+    """Не удалось удалить запись из БД."""
+
+
+class ImageDatabaseUpdateError(ImageError):
+    """Не удалось обновить запись в БД."""
+
+
+# DB Connection
+def get_db_connection() -> Connection:
+    return psycopg.connect(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        dbname=POSTGRES_DB,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+    )
+
+def wait_for_database():
+    while True:
+        try:
+            with get_db_connection() as connection:
+                execute_sql_file(connection, 'install.sql')
+            logger.info("Database connection established.")
+            return None
+        except psycopg.Error as e:
+            logger.warning( f"Could not connect to database: {e}" )
+            time.sleep(1)
+
+
+def db_function( connection: Connection, function_name: str, *args: Any,) -> Any:
+    placeholders = ", ".join(["%s"] * len(args))
+    sql = f"SELECT {function_name}({placeholders})"
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, args)
+            row = cursor.fetchone()
+        return row[0] if row else None
+    except Exception:
+        connection.rollback()
+        raise
+# execute only start. create function and Create table
+def execute_sql_file( connection: Connection, sql_file='install.sql') -> None:
+    file_path = Path(sql_file)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"SQL-файл не знайдено: {file_path}")
+    sql_script = file_path.read_text(encoding="utf-8")
+    if not sql_script.strip():
+        logger.warning("SQL-файл пустий: %s", file_path)
+        raise ValueError(f"SQL-файл пустой: {file_path}")
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql_script)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    logger.info( "SQL-файл побудовано: %s",file_path, )
+
+
+def get_image_filename(connection: Connection, image_id: int,) -> str | None:
+    return db_function( connection,f"{POSTGRES_SCHEME}.get_image_filename",image_id,)
+
+def insert_image(connection: Connection, file_name: str, original_name: str, size: int, file_type: str,) -> int:
+    result = db_function(
+        connection,f"{POSTGRES_SCHEME}.create_image",file_name, original_name, size, file_type,)
+    connection.commit()
+    return result
+
+def get_pagination( connection: Connection, page: int = 1,) -> dict:
+    return db_function( connection,f"{POSTGRES_SCHEME}.get_pagination",page, ITEMS_PER_PAGE,)
 
 # Request helpers
 def _read_body(handler):
@@ -89,31 +195,6 @@ def _extract_boundary(content_type: str) -> bytes:
 
 # Multipart processing
 def _find_multipart_parts( body: bytes, boundary: bytes,):
-    # Content - Type: multipart / form - data;
-    # boundary = ----WebKitFormBoundaryABC123
-
-    #Парсинг условно на части
-    # boundary = b"----WebKitFormBoundaryABC123"
-    # marker = b"--" + boundary
-
-    # ------WebKitFormBoundaryABC123\r\n
-    # Content - Disposition: form - data;
-    # name = "file";
-    # filename = "photo.jpg"\r\n
-    # Content - Type: image / jpeg\r\n
-    # \r\n
-    # [БАЙТЫ JPEG - ФАЙЛА]
-    # \r\n
-    # ------WebKitFormBoundaryABC123\r\n
-    # Content - Disposition: form - data;
-    # name = "file";
-    # filename = "image.png"\r\n
-    # Content - Type: image / png\r\n
-    # \r\n
-    # [БАЙТЫ PNG - ФАЙЛА]
-    # \r\n
-    # ------WebKitFormBoundaryABC123 - -\r\n(Запрос закончился)
-
     marker = b"--" + boundary
     parts: list[bytes] = []
     position = 0
@@ -196,38 +277,40 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
 
 
 # File validation
-def validate_file(file_name: str,data: bytes,) -> None:
+def validate_file(file_name: str,data: bytes,):
     safe_name = Path(file_name).name
-    extension = Path(safe_name).suffix.lower()
+    extension = get_file_extension(safe_name)
+    file_size = len(data)
 
     if extension not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise FileValidationError(f"Непідтримуваний формат файлу: {extension or '<none>'}. Доступні: {allowed}" )
 
-    if len(data) > MAX_FILE_SIZE:
+    if file_size > MAX_FILE_SIZE:
         raise FileValidationError(f"File '{safe_name}' is too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
+    return (safe_name, extension, file_size)
 
+def get_file_extension(file_name):
+    return Path(file_name).suffix.lower().strip(".")
 
 def _generate_unique_filename(file_name: str) -> str:
     safe_name = Path(file_name).name
-    path = Path(safe_name)
-    return (f"{path.stem}_{uuid.uuid4().hex}{path.suffix.lower()}" )
+    return (f"{uuid.uuid4().hex}.{get_file_extension(safe_name)}")
 
 
 def validate_files( files,):
     validated_files = []
     for file_name, data in files:
-        validate_file(file_name, data)
+        original_name, ext_file, file_size = validate_file(file_name, data)
         unique_name = _generate_unique_filename(file_name)
-        validated_files.append((unique_name, data))
+        validated_files.append((unique_name, original_name, ext_file, file_size, data))
     return validated_files
 
 def validate_uploaded_files(func):
     @wraps(func)
     def wrapper(handler):
         files = extract_file_data(handler)
-        validated_files = validate_files(files)
-        return func(handler, validated_files)
+        return func(handler, validate_files(files))
     return wrapper
 
 
@@ -294,10 +377,11 @@ def json_response(handler,status: int,message: str,file_names=None):
 @validate_uploaded_files
 def upload_files(handler, files,):
     file_names: list[str] = []
-
-    for file_name, data in files:
+    for file_name, original_name, ext_file, file_size, data in files:
         logger.info("Starting upload of '%s'",file_name,)
         save_file(file_name, data)
+        logger.info(f"Insert in DB: {file_name}, {original_name}, {file_size}, {ext_file} ", )
+        insert_image(get_db_connection(), file_name, original_name, file_size, ext_file )
         file_names.append(file_name)
         logger.info("File '%s' uploaded successfully",file_name,)
 
@@ -320,14 +404,15 @@ class Handler(SimpleHTTPRequestHandler):
 # Server
 def create_server() -> ThreadingHTTPServer:
     try:
-        return ThreadingHTTPServer((HOST, PORT), Handler,)
+        return ThreadingHTTPServer((HOST, APP_PORT), Handler, )
     except OSError as e:
-        logger.exception("Failed to start server on %s:%s",HOST, PORT,)
-        raise AppError(f"Failed to start server on {HOST}:{PORT}") from e
+        logger.exception("Failed to start server on %s:%s", HOST, APP_PORT, )
+        raise AppError(f"Failed to start server on {HOST}:{APP_PORT}") from e
 
 def main():
+    wait_for_database()
     server = create_server()
-    logger.info("Python server started on http://localhost:%s/",PORT,)
+    logger.info("Python server started on http://localhost:%s/", APP_PORT, )
 
     try:
         server.serve_forever()
