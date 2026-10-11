@@ -1,5 +1,222 @@
 # Image Manager — Python + PostgreSQL + NGINX + Docker Compose
 
+## Швидкий запуск проєкту
+
+### 1\. Підготовка каталогів
+
+Після клонування проєкту перейдіть до його кореневого каталогу.
+
+Для Linux створіть каталоги для зображень, логів і резервних копій та налаштуйте права доступу:
+
+```
+mkdir -p images logs backups
+sudo chown -R 1000:1000 images logs backups
+chmod 755 images logs backups
+```
+
+> **Примітка:** UID/GID `1000:1000` використовуються за замовчуванням. Якщо у `.env` задані інші значення `UID` і `GID`, необхідно відповідно змінити власника каталогів.
+
+### 2\. Налаштування `.env`
+
+Створіть файл `.env` у кореневому каталозі проєкту, поруч із `docker-compose.yml`:
+
+```
+# Application
+HOST_NGINX=localhost
+HOST_PORT=8080
+APP_PORT=8000
+
+# PostgreSQL
+POSTGRES_PORT=5432
+POSTGRES_SCHEME=public
+POSTGRES_DB=images_db
+POSTGRES_USER=root_user
+POSTGRES_PASSWORD=passw123
+
+# File upload
+ALLOWED_EXTENSIONS=jpg,png,gif,jpeg
+MAX_FILE_SIZE=5
+
+# Backup
+BACKUP_DIR=backups
+BACKUP_INTERVAL_MINUTES=5
+
+# Application user (optional)
+UID=1000
+GID=1000
+```
+
+**Основні налаштування:**
+
+- `HOST_PORT` — порт NGINX, доступний на host-системі.
+- `POSTGRES_DB` — назва бази даних.
+- `POSTGRES_USER` і `POSTGRES_PASSWORD` — облікові дані PostgreSQL.
+- `ALLOWED_EXTENSIONS` — дозволені розширення файлів.
+- `MAX_FILE_SIZE` — максимальний розмір одного файлу в МБ.
+- `BACKUP_INTERVAL_MINUTES` — інтервал автоматичного резервного копіювання в хвилинах.
+
+### 3\. Збірка та запуск
+
+Виконайте команду в кореневому каталозі проєкту:
+
+```
+docker compose up -d --build
+```
+
+Команда збере необхідні образи та запустить контейнери:
+
+- `nginx` — вебсервер;
+- `app` — Python API;
+- `postgres` — база даних PostgreSQL;
+- `backup_scheduler` — автоматичне резервне копіювання.
+
+Перевірте стан контейнерів:
+
+```
+docker compose ps
+```
+
+Перегляньте логи запуску:
+
+```
+docker compose logs -f
+```
+
+Після успішного запуску відкрийте frontend у браузері:
+
+```
+http://localhost:8080
+```
+
+Якщо в `.env` задано інше значення `HOST_PORT`, використовуйте відповідний порт.
+
+### 4\. Перевірка роботи API
+
+**Завантаження зображення:**
+
+```
+curl -X POST \
+  -F "file=@sample.jpg" \
+  http://localhost:8080/upload
+```
+
+**Отримання списку зображень:**
+
+```
+curl http://localhost:8080/images-list
+```
+
+**Отримання другої сторінки:**
+
+```
+curl "http://localhost:8080/images-list?page=2"
+```
+
+**Перегляд завантаженого зображення:**
+
+```
+http://localhost:8080/images/<filename>
+```
+
+Замість `<filename>` вкажіть ім'я файлу, отримане у відповіді `POST /upload`.
+
+**Видалення зображення за ID:**
+
+```
+curl -X DELETE http://localhost:8080/delete/1
+```
+
+Замість `1` вкажіть ID зображення в базі даних.
+
+### 5\. Зупинка проєкту
+
+Зупинити контейнери, зберігши дані:
+
+```
+docker compose down
+```
+
+Повторний запуск:
+
+```
+docker compose up -d
+```
+
+**Повне видалення контейнерів, локальних образів проєкту та даних PostgreSQL:**
+
+```
+docker compose down -v --rmi local
+```
+
+> **Увага!** Параметр `-v` видаляє іменований Docker volume `postgres-data`, у якому зберігається база даних. Дані PostgreSQL буде втрачено, якщо попередньо не створено резервну копію. Каталоги `images/`, `logs/` і `backups/`, підключені як bind volumes, цією командою не видаляються.
+
+### 6\. Перегляд резервних копій і логів
+
+Резервні копії PostgreSQL зберігаються в каталозі:
+
+```
+backups/
+```
+
+Інтервал їх створення задається параметром `BACKUP_INTERVAL_MINUTES`.
+
+Основні файли логів:
+
+```
+logs/
+├── app.log
+└── backup.log
+```
+
+Перегляд логів Python API:
+
+```
+docker compose logs -f app
+```
+
+Перегляд логів резервного копіювання:
+
+```
+docker compose logs -f backup_scheduler
+```
+
+Перегляд логів PostgreSQL:
+
+```
+docker compose logs -f postgres
+```
+
+Перегляд логів NGINX:
+
+```
+docker compose logs -f nginx
+```
+
+---
+
+## Змінні оточення
+
+| Змінна | Значення за замовчуванням у `.env` | Опис |
+| --- | --- | --- |
+| `HOST_NGINX` | `localhost` | Ім'я хоста для доступу до вебінтерфейсу. |
+| `HOST_PORT` | `8080` | Порт NGINX на host-системі. |
+| `APP_PORT` | `8000` | Порт Python API всередині контейнера. |
+| `POSTGRES_PORT` | `5432` | Порт PostgreSQL усередині Docker-мережі. |
+| `POSTGRES_SCHEME` | `public` | Схема PostgreSQL для функцій роботи із зображеннями. |
+| `POSTGRES_DB` | `images_db` | Назва бази даних. |
+| `POSTGRES_USER` | `root_user` | Користувач PostgreSQL. |
+| `POSTGRES_PASSWORD` | `passw123` | Пароль PostgreSQL. |
+| `ALLOWED_EXTENSIONS` | `jpg,png,gif,jpeg` | Дозволені розширення файлів. |
+| `MAX_FILE_SIZE` | `5` | Максимальний розмір одного файлу в МБ. |
+| `BACKUP_DIR` | `backups` | Каталог для резервних копій усередині контейнера. |
+| `BACKUP_INTERVAL_MINUTES` | `5` | Інтервал між резервними копіями в хвилинах. |
+| `UID` | `1000` | UID користувача Python-застосунку. |
+| `GID` | `1000` | GID групи Python-застосунку. |
+
+**Важливо:** ім'я хоста PostgreSQL у коді зафіксовано як `postgres` — це ім'я сервісу в `docker-compose.yml`. Порт Python API `8000` не публікується безпосередньо на host-систему: доступ до API здійснюється через NGINX.
+
+Для робочого середовища рекомендується встановити власний надійний пароль PostgreSQL у `.env` і не додавати цей файл до системи контролю версій.
+
 ## 1\. Призначення
 
 Проєкт демонструє роботу вебзастосунку для завантаження, зберігання, перегляду та видалення зображень із використанням Python, PostgreSQL, NGINX і Docker Compose.
