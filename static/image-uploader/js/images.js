@@ -897,16 +897,31 @@ document.addEventListener('DOMContentLoaded', () => {
              * URL column
              * ================================================= */
 
-            const urlColumn =
-                document.createElement('div');
+          const urlColumn =
+                    document.createElement('div');
+
+                    urlColumn.className =
+                        'file-col file-col-url';
 
 
-            urlColumn.className =
-                'file-col file-col-url';
+                    const urlLink =
+                        document.createElement('a');
 
+                    urlLink.href =
+                        imageUrl;
 
-            urlColumn.textContent =
-                imageUrl;
+                    urlLink.textContent =
+                        imageUrl;
+
+                    urlLink.target =
+                        '_blank';
+
+                    urlLink.rel =
+                        'noopener noreferrer';
+
+                    urlColumn.appendChild(
+                        urlLink
+                    );
 
 
             /* =================================================
