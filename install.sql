@@ -96,7 +96,6 @@ DECLARE
     v_result    JSONB;
 BEGIN
     v_page := COALESCE(p_page, 1);
-
     v_page_size := COALESCE(p_page_size, 10);
     v_offset := (v_page::BIGINT - 1) * v_page_size;
     SELECT COALESCE(
@@ -116,7 +115,7 @@ BEGIN
             file_type,
             upload_time
         FROM public.images
-        ORDER BY upload_time DESC
+        ORDER BY upload_time DESC, id DESC
         LIMIT v_page_size
         OFFSET v_offset
     ) AS page_rows;
