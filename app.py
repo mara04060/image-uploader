@@ -164,7 +164,7 @@ def get_pagination( connection: Connection, page: int = 1):
                     'has_previous', {page} > 1,
                     'has_next', {page} < CEIL(COUNT(id)::numeric / {ITEMS_PER_PAGE})
                 ) AS pagination
-                FROM public.images;
+                FROM {POSTGRES_SCHEME}.images;
             """
             cursor.execute( sql_script )
             result_json = cursor.fetchone()[0]
@@ -283,6 +283,12 @@ def extract_file_data(handler) -> list[tuple[str, bytes]]:
     return _parse_multipart_body( body, boundary )
 
 def validate_files(self, files: list[tuple[str, bytes]]):
+    for file_name, data in files:
+        error = validate_file(file_name, data)
+        if error:
+            send_params(self, 400, error)
+            return None
+
     saved = []
     try:
         for file_name, data in files:
@@ -440,23 +446,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not files:
             send_params(self, 400, "No files provided")
             return None
-        if not validate_files( self, files):
-            return None
-        for file_name, data in files:
-            logger.info(f"file name = {file_name} --> start downloading")
-            file_name_new = ( _generate_unique_filename( file_name ) )
-            download_file( file_name_new, data )
-            try:
-                with get_db_connection() as connection:
-                    insert_image(connection, file_name_new, file_name, len(data), get_file_ext(file_name))
-            except psycopg.Error as e:
-                logger.error("DB error, rollback file %s: %s",file_name,  e )
-                delete_file(file_name_new)
-                send_params( self,500,"Database error File Not Save" )
-                return None
-            logger.info( f"File {file_name_new} downloaded!" )
-            file_names.append(file_name_new )
-        send_params(self,200,"Файли успішно завантажені",file_names)
+        validate_files(self, files)
 
     # ---------------
     # Get Images
