@@ -18,7 +18,7 @@ from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from psycopg import Connection
 
 HOST = "0.0.0.0"
-APP_PORT= 8000
+APP_PORT = 8000
 
 WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
@@ -44,7 +44,7 @@ def parse_allowed_extensions(value: str) -> set[str]:
 ALLOWED_EXTENSIONS = parse_allowed_extensions(
     os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg")
 )
-MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 5)) * 1024 * 1024
+MAX_FILE_SIZE = 5 * 1024 * 1024
 MAX_REQUEST_SIZE = MAX_FILE_SIZE * 10
 ITEMS_PER_PAGE = 10
 
@@ -94,6 +94,69 @@ class ImageNotFoundError(ImageError):
 
 class PaginationError(RequestError):
     """Not correct pagination settings"""
+
+
+class ConfigurationError(AppError):
+    """Application configuration is missing or invalid."""
+
+
+def validate_positive_integer(name: str, default: int, maximum: int | None = None) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise ConfigurationError(f"{name} must be an integer") from error
+    if parsed <= 0:
+        raise ConfigurationError(f"{name} must be greater than zero")
+    if maximum is not None and parsed > maximum:
+        raise ConfigurationError(f"{name} must not exceed {maximum}")
+    return parsed
+
+
+def validate_app_config(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        global APP_PORT, POSTGRES_PORT, POSTGRES_SCHEME, POSTGRES_DB
+        global POSTGRES_USER, POSTGRES_PASSWORD, ALLOWED_EXTENSIONS
+        global MAX_FILE_SIZE, MAX_REQUEST_SIZE
+
+        try:
+            APP_PORT = validate_positive_integer("APP_PORT", 8000, 65535)
+            POSTGRES_PORT = validate_positive_integer("POSTGRES_PORT", 5432, 65535)
+
+            for name in ("POSTGRES_SCHEME", "POSTGRES_DB", "POSTGRES_USER"):
+                if not os.environ.get(name, globals()[name]).strip():
+                    raise ConfigurationError(f"{name} must not be empty")
+
+            POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public").strip()
+            POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db").strip()
+            POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user").strip()
+            POSTGRES_PASSWORD = os.environ.get(
+                "POSTGRES_PASSWORD", "123"
+            )
+
+            ALLOWED_EXTENSIONS = parse_allowed_extensions(
+                os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg")
+            )
+            if not ALLOWED_EXTENSIONS:
+                raise ConfigurationError(
+                    "ALLOWED_EXTENSIONS must contain at least one extension"
+                )
+
+            max_file_size_mb = validate_positive_integer(
+                "MAX_FILE_SIZE", 5
+            )
+            MAX_FILE_SIZE = max_file_size_mb * 1024 * 1024
+            MAX_REQUEST_SIZE = MAX_FILE_SIZE * 10
+        except ConfigurationError as error:
+            logger.error("Invalid application configuration: %s", error)
+            raise
+
+        return func(*args, **kwargs)
+    return wrapper
+
 
 # DB Connection
 def get_db_connection() -> Connection:
@@ -420,6 +483,10 @@ def save_file(file_name: str, data: bytes) -> Path:
         with file_path.open("xb") as file:
             file.write(data)
     except OSError as e:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to remove partial file '%s'",safe_name)
         raise ImageFileWriteError( f"Failed to save file '{safe_name}'") from e
     logger.info("Saved file '%s'", safe_name)
     return file_path
@@ -597,7 +664,11 @@ def delete_image_transaction(image_id: int) -> str:
             connection.rollback()
             raise
 
-        connection.commit()
+        try:
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         return file_name
 
 
@@ -661,6 +732,7 @@ def create_server() -> ThreadingHTTPServer:
         raise AppError(f"Failed to start server on {HOST}:{APP_PORT}" ) from e
 
 
+@validate_app_config
 def main() -> None:
     wait_for_database()
     server = create_server()
