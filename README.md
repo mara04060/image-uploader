@@ -38,9 +38,17 @@ Dockerfile багатоетапний: цілі (`target`) `app` (Python 3.12 Al
 ├── nginx.conf
 ├── requirements.txt
 ├── static/                # Фронтенд (віддається Nginx)
+├── test/                  # Ізольовані unit-тести з моками
+│   └── test_app.py
 ├── images/                # Завантажені зображення (том)
 ├── logs/                  # app.log, backup.log (том)
 └── backups/               # Резервні копії (за BACKUP_DIR)
+```
+
+Запуск unit-тестів з кореня проєкту (без Docker, PostgreSQL і запису файлів):
+
+```bash
+python3 -m unittest discover -s test -v
 ```
 
 ## Запуск
