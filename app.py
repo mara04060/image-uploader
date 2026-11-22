@@ -4,13 +4,17 @@ import os
 import re
 import time
 import uuid
+import warnings
 from functools import wraps
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, parse_qs
 
 import psycopg
+from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from psycopg import Connection
 
 HOST = "0.0.0.0"
@@ -297,6 +301,53 @@ def extract_file_data( handler: SimpleHTTPRequestHandler) -> list[tuple[str, byt
 def get_file_extension(file_name: str) -> str:
     return Path(file_name).suffix.lower().lstrip(".")
 
+
+IMAGE_FORMAT_EXTENSIONS = {
+    "JPEG": {"jpg", "jpeg"},
+    "PNG": {"png"},
+    "GIF": {"gif"},
+}
+
+
+def validate_image_content(file_name: str, data: bytes) -> str:
+    if not data:
+        raise ImageValidationError(f"File '{file_name}' is empty")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                if image.format not in IMAGE_FORMAT_EXTENSIONS:
+                    raise ImageValidationError(
+                        f"File '{file_name}' has unsupported image content"
+                    )
+
+                image.verify()
+
+            with Image.open(BytesIO(data)) as image:
+                detected_format = image.format
+                width, height = image.size
+                frame_count = getattr(image, "n_frames", 1)
+                for frame_index in range(frame_count):
+                    image.seek(frame_index)
+                    image.load()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+        raise ImageValidationError(
+            f"File '{file_name}' has invalid or corrupted image content"
+        ) from error
+    except (DecompressionBombError, DecompressionBombWarning) as error:
+        raise ImageValidationError(
+            f"File '{file_name}' is too large for safe image decoding"
+        ) from error
+
+    if width <= 0 or height <= 0:
+        raise ImageValidationError(
+            f"File '{file_name}' has invalid image dimensions"
+        )
+
+    return detected_format
+
+
 def validate_file(file_name: str,data: bytes) -> tuple[str, str, int]:
     safe_name = Path(file_name.replace("\\", "/")).name
     extension = get_file_extension(safe_name)
@@ -314,6 +365,15 @@ def validate_file(file_name: str,data: bytes) -> tuple[str, str, int]:
 
     if file_size > MAX_FILE_SIZE:
         raise ImageValidationError(f"File '{safe_name}' exceeds the maximum size")
+
+    detected_format = validate_image_content(safe_name, data)
+    allowed_extensions = IMAGE_FORMAT_EXTENSIONS.get(detected_format, set())
+    if extension not in allowed_extensions:
+        raise ImageValidationError(
+            f"File '{safe_name}' content format '{detected_format}' "
+            f"does not match extension '{extension}'"
+        )
+
     return safe_name, extension, file_size
 
 
