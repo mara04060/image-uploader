@@ -1,23 +1,24 @@
 import json
 import logging
 import os
+import re
+import time
 import uuid
+import warnings
+from functools import wraps
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
-import re
+from typing import Any
 from urllib.parse import urlparse, parse_qs
 
 import psycopg
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from psycopg import Connection
-import time
 
-# ---------------
-# Settings
-# ---------------
 HOST = "0.0.0.0"
-HOST_PORT: int = int(os.environ.get("APP_PORT", 8000))
+APP_PORT = 8000
 
 WEB_DIR = Path(__file__).resolve().parent
 LOG_DIR = WEB_DIR / "logs"
@@ -32,12 +33,22 @@ POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
 
-ALLOWED_EXTENSIONS= set(os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg").strip().lower().split(",") )
-MAX_FILE_SIZE = 1024 * 1024 * int(os.environ.get("MAX_FILE_SIZE", 5))
+def parse_allowed_extensions(value: str) -> set[str]:
+    return {
+        extension.strip().lower()
+        for extension in value.split(",")
+        if extension.strip()
+    }
+
+
+ALLOWED_EXTENSIONS = parse_allowed_extensions(
+    os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg")
+)
+MAX_FILE_SIZE = 5 * 1024 * 1024
+MAX_REQUEST_SIZE = MAX_FILE_SIZE * 10
 ITEMS_PER_PAGE = 10
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,14 +56,109 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler()
-    ]
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger("AppLogger")
 
-# ---------------
+# Custom exceptions
+class AppError(Exception):
+    """Bases error aplication."""
+
+class RequestError(AppError):
+    """Error HTTP-зrequest."""
+
+class MultipartError(RequestError):
+    """помилка розбору multipart/form-data."""
+
+class ImageError(AppError):
+    """Bases Error Images."""
+
+class ImageValidationError(ImageError):
+    """File not validation and verification."""
+
+class ImageFileWriteError(ImageError):
+    """No write file on Disk"""
+
+class ImageFileDeleteError(ImageError):
+    """Not delete file on disk"""
+
+class ImageDatabaseInsertError(ImageError):
+    """Not inserted info in DB"""
+
+class ImageDatabaseDeleteError(ImageError):
+    """No delete info in DB"""
+
+class ImageNotFoundError(ImageError):
+    """Image not found"""
+
+class PaginationError(RequestError):
+    """Not correct pagination settings"""
+
+
+class ConfigurationError(AppError):
+    """Application configuration is missing or invalid."""
+
+
+def validate_positive_integer(name: str, default: int, maximum: int | None = None) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise ConfigurationError(f"{name} must be an integer") from error
+    if parsed <= 0:
+        raise ConfigurationError(f"{name} must be greater than zero")
+    if maximum is not None and parsed > maximum:
+        raise ConfigurationError(f"{name} must not exceed {maximum}")
+    return parsed
+
+
+def validate_app_config(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        global APP_PORT, POSTGRES_PORT, POSTGRES_SCHEME, POSTGRES_DB
+        global POSTGRES_USER, POSTGRES_PASSWORD, ALLOWED_EXTENSIONS
+        global MAX_FILE_SIZE, MAX_REQUEST_SIZE
+
+        try:
+            APP_PORT = validate_positive_integer("APP_PORT", 8000, 65535)
+            POSTGRES_PORT = validate_positive_integer("POSTGRES_PORT", 5432, 65535)
+
+            for name in ("POSTGRES_SCHEME", "POSTGRES_DB", "POSTGRES_USER"):
+                if not os.environ.get(name, globals()[name]).strip():
+                    raise ConfigurationError(f"{name} must not be empty")
+
+            POSTGRES_SCHEME = os.environ.get("POSTGRES_SCHEME", "public").strip()
+            POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db").strip()
+            POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user").strip()
+            POSTGRES_PASSWORD = os.environ.get(
+                "POSTGRES_PASSWORD", "123"
+            )
+
+            ALLOWED_EXTENSIONS = parse_allowed_extensions(
+                os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg")
+            )
+            if not ALLOWED_EXTENSIONS:
+                raise ConfigurationError(
+                    "ALLOWED_EXTENSIONS must contain at least one extension"
+                )
+
+            max_file_size_mb = validate_positive_integer(
+                "MAX_FILE_SIZE", 5
+            )
+            MAX_FILE_SIZE = max_file_size_mb * 1024 * 1024
+            MAX_REQUEST_SIZE = MAX_FILE_SIZE * 10
+        except ConfigurationError as error:
+            logger.error("Invalid application configuration: %s", error)
+            raise
+
+        return func(*args, **kwargs)
+    return wrapper
+
+
 # DB Connection
-# ---------------
 def get_db_connection() -> Connection:
     return psycopg.connect(
         host=POSTGRES_HOST,
@@ -62,467 +168,581 @@ def get_db_connection() -> Connection:
         password=POSTGRES_PASSWORD,
     )
 
-
 def wait_for_database():
     while True:
         try:
             with get_db_connection() as connection:
-                create_table(connection)
+                execute_sql_file(connection, 'install.sql')
             logger.info("Database connection established.")
-            return
-        except psycopg.Error as e:
-            logger.warning( f"Could not connect to database: {e}" )
-            time.sleep(1)
-
-
-# ---------------
-# CRUD
-# ---------------
-def create_table(connection: Connection):
-    with connection.cursor() as cursor:
-        sql_script = f"""
-        CREATE TABLE IF NOT EXISTS {POSTGRES_SCHEME}.images (
-          id SERIAL PRIMARY KEY,
-          filename TEXT NOT NULL,
-          original_name TEXT NOT NULL,
-          size INTEGER NOT NULL,
-          upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          file_type TEXT NOT NULL
-        );
-        """
-        cursor.execute(sql_script)
-    connection.commit()
-    logger.debug("SQL: %s",sql_script )
-    logger.info("Database table is ready!")
-
-def insert_image( connection: Connection, file_name: str, original_name: str, size: int, file_type: str):
-    try:
-        with connection.cursor() as cursor:
-            sql_script = f"""
-                INSERT INTO {POSTGRES_SCHEME}.images (
-                    filename,
-                    original_name,
-                    size,
-                    file_type
-                )
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-            """
-            cursor.execute( sql_script,
-                (file_name, original_name, size, file_type ) )
-            result = cursor.fetchone()
-        # connection.commit()
-        logger.info("Insert data %s, %s, %s, %s",file_name, original_name, size, file_type )
-        logger.debug("SQL: %s",sql_script )
-        return result[0]
-    except Exception:
-        connection.rollback()
-        raise
-
-def get_images( connection: Connection, page: int = 1):
-    page = page if page > 0 else 1
-    offset = (page - 1) * ITEMS_PER_PAGE
-    try:
-        with connection.cursor() as cursor:
-            sql_script = f"""
-                SELECT
-                    id, filename, original_name, size, file_type, upload_time
-                FROM {POSTGRES_SCHEME}.images
-                ORDER BY upload_time DESC
-                OFFSET %s
-                LIMIT {ITEMS_PER_PAGE};
-            """
-
-            cursor.execute( sql_script, (offset,) )
-            rows = cursor.fetchall()
-            logger.debug("SQL: %s",sql_script )
-            columns = [ desc[0] for desc in cursor.description ]
-
-            result = [
-                {
-                    columns[0]: row[0],
-                    **dict( zip(columns[1:], row[1:] )  )
-                }
-                for row in rows ]
-            logger.info("Result Data Select: %s",result )
-            return result
-
-    except Exception:
-        connection.rollback()
-        raise
-
-
-def get_pagination( connection: Connection, page: int = 1):
-    try:
-        with connection.cursor() as cursor:
-            sql_script = f"""
-                SELECT jsonb_build_object(
-                    'total_items', COUNT(id),
-                    'page', {page},
-                    'page_size', {ITEMS_PER_PAGE},
-                    'total_pages', CEIL(COUNT(id)::numeric / {ITEMS_PER_PAGE}),
-                    'has_previous', {page} > 1,
-                    'has_next', {page} < CEIL(COUNT(id)::numeric / {ITEMS_PER_PAGE})
-                ) AS pagination
-                FROM {POSTGRES_SCHEME}.images;
-            """
-            cursor.execute( sql_script )
-            result_json = cursor.fetchone()[0]
-            logger.debug("SQL: %s",sql_script )
-            logger.info("Result JSON: %s",result_json )
-            return result_json
-    except Exception:
-        connection.rollback()
-        raise
-
-def get_image_filename( connection: Connection,image_id: int):
-    if image_id <= 0:
-        return None
-
-    try:
-        with connection.cursor() as cursor:
-            sql_script = f"""
-                SELECT filename
-                FROM {POSTGRES_SCHEME}.images
-                WHERE id = %s;
-            """
-            cursor.execute(sql_script, (image_id,) )
-            result = cursor.fetchone()
-        logger.debug("SQL: %s",sql_script )
-        if result is None:
             return None
+        except (psycopg.Error, OSError, ValueError) as e:
+            logger.warning("Database initialization failed: %s",e)
+        time.sleep(1)
 
-        return result[0]
-    except Exception:
-        connection.rollback()
-        raise
 
-def del_image(connection: Connection, image_id: int):
-    if image_id <= 0:
-        return None
-
+def db_function( connection: Connection, function_name: str, *args):
+    placeholders = ", ".join(["%s"] * len(args))
+    sql = f"SELECT {function_name}({placeholders})"
     try:
         with connection.cursor() as cursor:
-            sql_script = None
-            if image_id > 0:
-                sql_script = f"""
-                    DELETE FROM {POSTGRES_SCHEME}.images
-                    WHERE id = %s RETURNING original_name;
-                """
-                cursor.execute( sql_script, (image_id,) )
-                row = cursor.fetchone()
-                filename = row[0] if row else None
-        connection.commit()
-        logger.debug("SQL: %s",sql_script )
-        logger.info("SQL: Delete image id = %s",image_id )
-        return filename
+            cursor.execute(sql, args)
+            row = cursor.fetchone()
+        return row[0] if row else None
     except Exception:
         connection.rollback()
         raise
 
-# ---------------
-# Helpers
-# ---------------
-def _read_body(handler):
-    content_length = handler.headers.get("Content-Length")
+# execute only start. create function and Create table
+def execute_sql_file( connection: Connection, sql_file='install.sql') -> None:
+    file_path = Path(sql_file)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"SQL-файл не знайдено: {file_path}")
+    sql_script = file_path.read_text(encoding="utf-8")
+    if not sql_script.strip():
+        logger.warning("SQL-файл пустий: %s", file_path)
+        raise ValueError(f"SQL-файл пустой: {file_path}")
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql_script)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    logger.info( "SQL-файл побудовано: %s",file_path, )
 
+
+def get_image_filename(connection: Connection, image_id: int,) -> str | None:
+    return db_function( connection,f"{POSTGRES_SCHEME}.get_image_filename",image_id,)
+
+def insert_image(connection: Connection, file_name: str, original_name: str, size: int, file_type: str,) -> int:
+    try:
+        result = db_function(connection,f"{POSTGRES_SCHEME}.create_image",file_name, original_name, size, file_type,)
+        if result is None:
+            logger.error("Database did not return the image ID")
+            raise ImageDatabaseInsertError("Database did not return the image ID")
+        return result
+    except psycopg.Error as e:
+        raise ImageDatabaseInsertError("Failed to create image database record") from e
+
+def get_images(connection: Connection, page: int = 1):
+    return db_function(connection, f"{POSTGRES_SCHEME}.get_images", page, ITEMS_PER_PAGE)
+
+def get_pagination( connection: Connection, page: int = 1,) -> dict:
+    return db_function( connection,f"{POSTGRES_SCHEME}.get_pagination",page, ITEMS_PER_PAGE,)
+
+def delete_image( connection: Connection, image_id: int = 1):
+    try:
+        return db_function(connection, f"{POSTGRES_SCHEME}.delete_image", image_id)
+    except psycopg.Error as e:
+        raise ImageDatabaseDeleteError(f"Failed to delete image record: {image_id}") from e
+
+
+# Request helpers
+def _read_body(handler: SimpleHTTPRequestHandler) -> bytes:
+    content_length = handler.headers.get("Content-Length")
     if content_length is None:
-        raise ValueError("Content-Length header is required")
+        raise RequestError("Content-Length header is missing")
     try:
         length = int(content_length)
-    except ValueError:
-        raise ValueError("Invalid Content-Length")
+    except ValueError as e:
+        raise RequestError("Invalid Content-Length header") from e
 
-    if length <= 0:
-        raise ValueError("Empty request body")
-    # Дозволяю завантажувати до 10 файлыв в одночас по 5 Мб кожен максимум!
-    if length > 10 * MAX_FILE_SIZE:
-        raise ValueError(
-            f"Request too large. Max size allowed is "
-            f"{MAX_FILE_SIZE // (1024 * 1024)}MB"
-        )
-    return handler.rfile.read(length)
+    if length < 0:
+        raise RequestError("Invalid Content-Length value")
 
-def _extract_boundary(content_type: str):
-    match = re.search(r'boundary="?([^";]+)"?', content_type )
-    if match:
-        return match.group(1).encode()
-    logger.warning(f"Could not extract boundary from {content_type}" )
-    return b""
+    if length > MAX_REQUEST_SIZE:
+        raise RequestError("Request exceeds the maximum allowed size")
 
-def _parse_multipart_body( body: bytes,boundary: bytes) -> list[tuple[str, bytes]]:
-    parts = body.split(b"--" + boundary )
-    extracted_files = []
+    try:
+        body = handler.rfile.read(length)
+    except OSError as e:
+        raise RequestError("Failed to read request body") from e
+
+    if len(body) != length:
+        raise RequestError("Incomplete request body")
+
+    return body
+
+
+def _extract_boundary(content_type: str) -> bytes:
+    if not content_type:
+        raise MultipartError("Content-Type header is missing")
+
+    if not content_type.lower().startswith("multipart/form-data"):
+        raise MultipartError("Content-Type must be multipart/form-data")
+
+    match = re.search(r'boundary=(?:"([^"]+)"|([^;\s]+))',content_type, re.IGNORECASE)
+    if not match:
+        raise MultipartError("Multipart boundary was not found")
+    boundary = match.group(1) or match.group(2)
+    try:
+        return boundary.encode("ascii")
+    except UnicodeEncodeError as e:
+        raise MultipartError("Invalid multipart boundary") from e
+
+
+# Multipart processing
+def _find_multipart_parts(body: bytes, boundary: bytes) -> list[bytes]:
+    marker = b"--" + boundary
+    parts: list[bytes] = []
+    position = 0
+
+    while True:
+        boundary_start = body.find(marker, position)
+        if boundary_start == -1:
+            break
+
+        part_start = boundary_start + len(marker)
+
+        if body[part_start:part_start + 2] == b"--":
+            break
+
+        if body[part_start:part_start + 2] != b"\r\n":
+            raise MultipartError("Invalid multipart boundary delimiter")
+        part_start += 2
+        next_boundary = body.find(marker, part_start)
+        if next_boundary == -1:
+            raise MultipartError("Multipart body has an incomplete boundary")
+        part = body[part_start:next_boundary]
+
+        if part.endswith(b"\r\n"):
+            part = part[:-2]
+
+        if part:
+            parts.append(part)
+        position = next_boundary
+
+    if not parts:
+        raise MultipartError("No multipart parts found")
+    return parts
+
+
+def _extract_file_from_part(part: bytes) -> tuple[str, bytes] | None:
+    separator = b"\r\n\r\n"
+    header_end = part.find(separator)
+
+    if header_end == -1:
+        raise MultipartError("Multipart part has invalid headers")
+
+    headers_raw = part[:header_end].decode("utf-8", errors="replace")
+    file_body = part[header_end + len(separator):]
+    filename_match = re.search(r'filename="([^"]*)"', headers_raw, re.IGNORECASE,)
+
+    if not filename_match:
+        return None
+
+    filename = filename_match.group(1).strip()
+    if not filename:
+        raise MultipartError("Uploaded file has an empty filename")
+
+    if not file_body:
+        raise ImageValidationError(f"Uploaded file '{filename}' is empty")
+    return filename, file_body
+
+
+def _parse_multipart_body(body: bytes,boundary: bytes) -> list[tuple[str, bytes]]:
+    parts = _find_multipart_parts(body, boundary)
+    files: list[tuple[str, bytes]] = []
 
     for part in parts:
-        # Тупо вырезка пустых данных которые мне мешают...
-        if ( not part or part == b"--" or part.startswith(b"--\r\n") ):
-            continue
+        file_data = _extract_file_from_part(part)
+        if file_data is not None:
+            files.append(file_data)
+    if not files:
+        raise MultipartError("No files provided")
+    return files
 
-        header_body_split = part.find(b"\r\n\r\n" )
-        if header_body_split == -1:
-            continue
 
-        headers_raw = part[:header_body_split].decode("utf-8", errors="ignore" )
-        data = part[header_body_split + 4:].rstrip(b"\r\n")
-
-        # Это спасибо Макс подсказал.. реально работает...
-        filename_match = re.search(r'filename="([^"]+)"',headers_raw )
-        if filename_match:
-            filename = filename_match.group(1)
-            extracted_files.append( (filename, data ) )
-    return extracted_files
-
-def extract_file_data(handler) -> list[tuple[str, bytes]]:
-    content_type = handler.headers.get( "Content-Type", "")
-    boundary = _extract_boundary(content_type )
-    if not boundary:
-        logger.warning("No body in boundary" )
-        return []
+def extract_file_data( handler: SimpleHTTPRequestHandler) -> list[tuple[str, bytes]]:
+    content_type = handler.headers.get("Content-Type", "")
+    boundary = _extract_boundary(content_type)
     body = _read_body(handler)
-    return _parse_multipart_body( body, boundary )
+    return _parse_multipart_body(body, boundary)
 
-def validate_files(self, files: list[tuple[str, bytes]]):
+
+# File validation
+def get_file_extension(file_name: str) -> str:
+    return Path(file_name).suffix.lower().lstrip(".")
+
+
+IMAGE_FORMAT_EXTENSIONS = {
+    "JPEG": {"jpg", "jpeg"},
+    "PNG": {"png"},
+    "GIF": {"gif"},
+}
+
+
+def validate_image_content(file_name: str, data: bytes) -> str:
+    if not data:
+        raise ImageValidationError(f"File '{file_name}' is empty")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                if image.format not in IMAGE_FORMAT_EXTENSIONS:
+                    raise ImageValidationError(
+                        f"File '{file_name}' has unsupported image content"
+                    )
+
+                image.verify()
+
+            with Image.open(BytesIO(data)) as image:
+                detected_format = image.format
+                width, height = image.size
+                frame_count = getattr(image, "n_frames", 1)
+                for frame_index in range(frame_count):
+                    image.seek(frame_index)
+                    image.load()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+        raise ImageValidationError(
+            f"File '{file_name}' has invalid or corrupted image content"
+        ) from error
+    except (DecompressionBombError, DecompressionBombWarning) as error:
+        raise ImageValidationError(
+            f"File '{file_name}' is too large for safe image decoding"
+        ) from error
+
+    if width <= 0 or height <= 0:
+        raise ImageValidationError(
+            f"File '{file_name}' has invalid image dimensions"
+        )
+
+    return detected_format
+
+
+def validate_file(file_name: str,data: bytes) -> tuple[str, str, int]:
+    safe_name = Path(file_name.replace("\\", "/")).name
+    extension = get_file_extension(safe_name)
+    file_size = len(data)
+
+    if not safe_name or safe_name in {".", ".."}:
+        raise ImageValidationError("Invalid filename")
+
+    if extension not in ALLOWED_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise ImageValidationError(f"Unsupported file extension: {extension or '<none>'}. Allowed: {allowed}")
+
+    if file_size == 0:
+        raise ImageValidationError(f"File '{safe_name}' is empty")
+
+    if file_size > MAX_FILE_SIZE:
+        raise ImageValidationError(f"File '{safe_name}' exceeds the maximum size")
+
+    detected_format = validate_image_content(safe_name, data)
+    allowed_extensions = IMAGE_FORMAT_EXTENSIONS.get(detected_format, set())
+    if extension not in allowed_extensions:
+        raise ImageValidationError(
+            f"File '{safe_name}' content format '{detected_format}' "
+            f"does not match extension '{extension}'"
+        )
+
+    return safe_name, extension, file_size
+
+
+def _generate_unique_filename(file_name: str) -> str:
+    extension = get_file_extension(file_name)
+    return f"{uuid.uuid4().hex}.{extension}"
+
+def validate_files(files: list[tuple[str, bytes]]) -> list[tuple[str, str, str, int, bytes]]:
+    validated_files = []
     for file_name, data in files:
-        error = validate_file(file_name, data)
-        if error:
-            send_params(self, 400, error)
-            return None
+        original_name, extension, file_size = validate_file( file_name, data)
+        unique_name = _generate_unique_filename(original_name)
+        validated_files.append( (unique_name,original_name,extension,file_size,data) )
+    return validated_files
 
-    saved = []
+def validate_uploaded_files(func):
+    @wraps(func)
+    def wrapper(self):
+        files = extract_file_data(self)
+        validated_files = validate_files(files)
+        return func(self, validated_files)
+    return wrapper
+
+def get_page(params) :
+    page_values = params.get("page", ["1"])
+
+    if len(page_values) != 1:
+        raise ValueError("Parameter 'page' must be specified only once")
     try:
-        for file_name, data in files:
-            new_name = f"{uuid.uuid4().hex}.{get_file_ext(file_name)}"
-            download_file(new_name, data)
-            saved.append((new_name, file_name, len(data)))
-        with get_db_connection() as connection:
-            for new_name, original, size in saved:
-                insert_image(connection, new_name, original, size, get_file_ext(original))
-    except (psycopg.Error, OSError) as e:
-        logger.error("Upload failed, rolling back %d file(s): %s", len(saved), e)
-        for new_name, *_ in saved:
-            try:
-                delete_file(new_name)
-            except Exception:
-                logger.exception("Cleanup failed for %s", new_name)
-        send_params(self, 500, "Files not saved")
-        return None
-    send_params(self, 200, "Файли успішно завантажені", [n for n, *_ in saved])
+        page = int(page_values[0])
+    except (ValueError, TypeError):
+        raise ValueError("Parameter 'page' must be an integer") from None
 
-def validate_file(file_name: str,data: bytes):
-    if not data: return "Empty file"
-    if len(data) > MAX_FILE_SIZE:
-        return ( f"File too large. Max size allowed is {MAX_FILE_SIZE // (1024 * 1024)}MB" )
-    # TODO вынести все сообщения как исключения.
-    # Пока долго заморачиваться
-    file_extension = get_file_ext(file_name)
-    if file_extension not in ALLOWED_EXTENSIONS:
-        return (f"Непідтримуваний формат файлу: {file_extension}. доступны лише: {ALLOWED_EXTENSIONS}" )
+    if page < 1:
+        raise ValueError("Parameter 'page' must be greater than zero")
+    return page
 
-    # Якщо робити таку перевірку то повинні бути справжні MIME code JPEG GIF PNG
-    if not is_real_image(file_extension, data):
-        return (f"Image is not correct File. mime code is not Image!")
-
-    return None
-
-# Перевіряє імідж з внутрішнього боку
-def is_real_image(ext: str, data: bytes):
+# File saving
+def save_file(file_name: str, data: bytes) -> Path:
+    safe_name = Path(file_name).name
+    file_path = UPLOAD_DIR / safe_name
     try:
-        with Image.open(BytesIO(data)) as img:
-            fmt = img.format
-            img.verify()
-            logger.info(f"Image is mime code {fmt}")
-            if fmt.lower() in ALLOWED_EXTENSIONS:
-                return fmt
-    except Exception:
-        logger.warning(f"Could not determine mime code for {ext}" )
-        return False
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        with file_path.open("xb") as file:
+            file.write(data)
+    except OSError as e:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to remove partial file '%s'",safe_name)
+        raise ImageFileWriteError( f"Failed to save file '{safe_name}'") from e
+    logger.info("Saved file '%s'", safe_name)
+    return file_path
 
-def get_file_ext(file_name: str):
-    logger.info("Extended = %s", Path(file_name).suffix.lower().strip(".") )
-    return Path(file_name).suffix.lower().strip(".")
+def get_image_file_name( connection: Connection, image_id: int) -> str:
+    file_name = get_image_filename(connection, image_id)
+    if not file_name:
+        raise ImageNotFoundError(f"Image not found: {image_id}")
+    safe_name = Path(file_name).name
+    if safe_name != file_name or safe_name in {"", ".", ".."}:
+        raise ImageError(f"Invalid filename in database for image {image_id}")
+    return safe_name
 
-def _generate_unique_filename( file_name: str):
-    ext = get_file_ext(file_name)
-    return (f"{uuid.uuid4().hex}.{ext}")
+def delete_file(file_name: str) -> None:
+    safe_name = Path(file_name).name
+    if safe_name != file_name or safe_name in {"", ".", ".."}:
+        logger.error("Invalid filename for deletion")
+        raise ImageFileDeleteError("Invalid filename for deletion")
+    file_path = UPLOAD_DIR / safe_name
+    try:
+        file_path.unlink()
+    except FileNotFoundError as e:
+        logger.warning("File not found on disk: %s",safe_name)
+        raise ImageFileDeleteError(f"Image file not found: '{safe_name}'") from e
+    except OSError as e:
+        logger.exception("Failed to remove file '%s'",safe_name)
+        raise ImageFileDeleteError( f"Failed to remove file '{safe_name}'" ) from e
+    logger.info("File removed: %s", safe_name)
 
-def download_file(full_filename,data):
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    with open(UPLOAD_DIR / full_filename, "wb") as file:
-        file.write(data)
-    logger.info(f"Saved {full_filename}" )
-
-def row_to_dict(rows):
-    return [dict(row) for row in rows]
-
-def send_json_in_list(self,data: dict, status: int):
-    self.send_response( status )
-    send_json( self,  data )
-    return None
-
-def send_json_dict(self,data: dict):
-    status = int( data.get("status",200) )
-    self.send_response( status )
-    send_json( self, data )
-    return None
-
-def send_json(self, data):
-    self.send_header("Content-type","application/json")
-    self.send_header("Access-Control-Allow-Origin", "*")
-    response_body = json.dumps( data, ensure_ascii=False, default=str).encode("utf-8")
-    self.send_header("Content-Length", str(len(response_body)) )
-    self.end_headers()
-    self.wfile.write( response_body )
-    logger.info(f"Send JSON {data}")
-
-def send_params( self,status,message,file_names=None):
-    send_json_dict( self,
-    {"status": status,
+# JSON
+def send_params(handler: SimpleHTTPRequestHandler,status: int,message: str,file_names: Any = None) -> None:
+    send_json_dict(
+        handler,
+        {
+            "status": status,
             "message": message,
-            "file": file_names
-        }
+            "file": file_names,
+        },
     )
 
 
-def delete_file(file_name: str):
-    logger.info(f"Deleting {file_name}")
-    if ( not isinstance(file_name, str) or not file_name.strip() ):
-        logger.error(f"File is Not Delete")
-        raise ValueError( "Bad file name." )
-
-    # Неможливо змынити директорію з якої видаляємо
-    # ../file, /tmp/file, subdir/file и т.п.
-    filename_path = Path(file_name)
-    if (filename_path.name != file_name or file_name in {".", ".."}):
-        raise ValueError( "WARNING: Only file name can be specified." )
-
-    # Шлях в межах лише UPLOAD_DIR
-    upload_dir = UPLOAD_DIR.resolve()
-    file_path = (upload_dir / file_name).resolve()
-
-    # Ще один додатковий захист
+def send_json_dict(handler: SimpleHTTPRequestHandler,data: dict[str, Any]) -> None:
+    status = int(data.get("status", 200))
+    if not isinstance(status, int) or not 100 <= status <= 599:
+        raise ValueError("Invalid HTTP status code")
+    response_body = json.dumps( data, ensure_ascii=False, default=str).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type","application/json; charset=utf-8")
+    handler.send_header("Access-Control-Allow-Origin","*")
+    handler.send_header("Content-Length", str(len(response_body)) )
+    handler.end_headers()
     try:
-        file_path.relative_to(upload_dir)
-    except ValueError:
-        raise ValueError("Invalid file path")
-
-    # перевірка існування файлу
-    # Якщо вже не існує - то хоча б з БД видаляємо далі
-    if not file_path.exists():
-        return False
-
-    # Якщо це директорія
-    if file_path.is_dir():
-        raise IsADirectoryError( f"This is a directory, not a file.: {file_name}" )
-    file_path.unlink()
-    return True
+        handler.wfile.write(response_body)
+    except OSError:
+        logger.warning("Client disconnected while receiving the response", exc_info=True )
+        return
+    logger.info("JSON response sent: status=%s", status)
 
 
-# ---------------
-# Func Business Logic
-# ---------------
-class Handler(SimpleHTTPRequestHandler):
-    def __init__(self,*args,**kwargs):
-        super().__init__( *args, directory=str(START_DIR), **kwargs )
+# Upload processing
+def handle_upload_errors(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except (RequestError, ImageValidationError) as e:
+            logger.warning("Upload request rejected: %s", e)
+            send_params(self, 400, str(e))
+        except ImageFileWriteError as e:
+            logger.error("Upload file operation failed: %s", e)
+            send_params(self, 500, "Failed to save uploaded file")
+        except ImageDatabaseInsertError as e:
+            logger.error("Upload database operation failed: %s", e)
+            send_params(self, 500, "Failed to save image metadata")
+        except psycopg.Error:
+            logger.exception("Database error during upload")
+            send_params(self, 500, "Database error")
+        except Exception:
+            logger.exception("Unexpected error during upload")
+            send_params(self, 500, "Internal server error")
+    return wrapper
 
-    # ---------------
-    # Upload POST
-    # ---------------
-    def do_POST(self):
-        file_names: list = []
-        if self.path != "/upload":
-            logger.warning(f"Bad route {self.path}" )
-            # принципово сторінку а не JSON
-            self.send_error( 404 )
-            return None
+def _save_uploaded_files(files: list[tuple[str, str, str, int, bytes]]) -> list[Path]:
+    saved_paths: list[Path] = []
+    try:
+        for file_name, _, _, _, data in files:
+            saved_paths.append(save_file(file_name, data))
+    except ImageFileWriteError:
+        for file_path in reversed(saved_paths):
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to clean up file '%s'",file_path.name)
+        raise
+    return saved_paths
+
+
+def _insert_uploaded_files(connection: Connection, files: list[tuple[str, str, str, int, bytes]]) -> list[str]:
+    file_names = []
+    for file_name, original_name, extension, file_size, _ in files:
+        insert_image( connection, file_name, original_name,file_size, extension )
+        file_names.append(file_name)
+    return file_names
+
+
+@handle_upload_errors
+@validate_uploaded_files
+def upload_files( self, files: list[tuple[str, str, str, int, bytes]]) -> None:
+    saved_paths = _save_uploaded_files(files)
+    try:
+        with get_db_connection() as connection:
+            file_names = _insert_uploaded_files( connection, files)
+    except Exception:
+        for file_path in reversed(saved_paths):
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to clean up file '%s'",file_path.name)
+        raise
+
+    logger.info("Successfully uploaded %s file(s)",len(file_names) )
+    send_params(self,200,"Файлы успешно загружены", file_names )
+
+def get_page(params: dict[str, list[str]]) -> int:
+    page_values = params.get("page", ["1"])
+    if len(page_values) != 1:
+        raise PaginationError("Parameter 'page' must be specified only once" )
+    try:
+        page = int(page_values[0])
+    except (ValueError, TypeError) as e:
+        raise PaginationError("Parameter 'page' must be an integer") from e
+    if page < 1:
+        raise PaginationError("Parameter 'page' must be greater than zero")
+    return page
+
+def get_images_page(page: int) -> dict[str, Any]:
+    with get_db_connection() as connection:
+        items = get_images(connection, page)
+        pagination = get_pagination(connection, page)
+    return {
+        "status": 200,
+        "items": items,
+        "pagination": pagination,
+    }
+
+def get_files_json(self,parsed) -> None:
+    try:
+        page = get_page(parse_qs(parsed.query))
+        logger.info("Requested images page: %s", page)
+        response_data = get_images_page(page)
+        send_json_dict(self, response_data)
+    except PaginationError as error:
+        logger.warning("Invalid pagination parameters: %s", error)
+        send_params(self, 400, str(error))
+    except psycopg.Error:
+        logger.exception("Database error during GET /images-list")
+        send_params(self, 500, "Database error")
+    except OSError:
+        logger.exception("I/O error during GET /images-list" )
+        send_params(self, 500, "Internal server error")
+
+def delete_image_transaction(image_id: int) -> str:
+    with get_db_connection() as connection:
+        file_name = get_image_file_name(connection, image_id)
+        logger.info("Starting deletion of image ID=%s, file=%s",image_id, file_name)
+
+        deleted = delete_image(connection, image_id)
+        if not deleted:
+            connection.rollback()
+            raise ImageNotFoundError(f"Image not found: {image_id}")
 
         try:
-            files = extract_file_data(self)
-        except ValueError as e:
-            logger.warning("Bad upload request: %s", e)
-            send_params(self, 400, str(e))  # для «слишком большой» лучше 413
-            return None
+            delete_file(file_name)
+        except ImageFileDeleteError:
+            connection.rollback()
+            raise
 
-        if not files:
-            send_params(self, 400, "No files provided")
-            return None
-        validate_files(self, files)
+        try:
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        return file_name
 
-    # ---------------
-    # Get Images
-    # ---------------
-    def do_GET(self):
+
+def delete_image_file(self,image_id: int) -> None:
+    try:
+        file_name = delete_image_transaction(image_id)
+        send_params(self,200,f"Image deleted: {image_id}", file_name )
+    except ImageNotFoundError as error:
+        logger.info("Image deletion rejected: %s", error)
+        send_params(self, 404, str(error))
+    except ImageDatabaseDeleteError:
+        logger.exception("Database error during deletion of image ID=%s",image_id )
+        send_params(self, 500, "Database error")
+    except psycopg.Error:
+        logger.exception("Database error during deletion of image ID=%s",image_id )
+        send_params(self, 500, "Database error")
+    except ImageFileDeleteError:
+        logger.exception("File deletion failed for image ID=%s",image_id)
+        send_params(self,500,"Failed to remove image file")
+
+
+# HTTP Handler
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__( *args,directory=str(START_DIR), **kwargs)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path != "/upload":
+            logger.warning("POST %s -> 404", parsed.path)
+            send_params(self, 404, "Page not found")
+            return
+        upload_files(self)
+
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path != "/images-list":
-            logger.warning(f"GET {parsed.path} --> 404")
-            # Принципово сторінку 404 помилки замість JSON
-            self.send_error(404)
-            return None
+            logger.warning("GET %s -> 404", parsed.path)
+            send_params(self, 404, "Page not found")
+            return
+        get_files_json(self, parsed)
 
-        params = parse_qs( parsed.query)
-        try:
-            page = int( params.get("page",["1"] )[0] )
-        except ValueError as e:
-            self.send_error(400,"Invalid page" )
-            logger.warning( f"Page not found: {e}" )
-            return None
-        logger.info( f"Page found: {page}")
-        try:
-            with get_db_connection() as connection:
-                json_obj = {
-                    "items": get_images( connection, page),
-                    "pagination": get_pagination( connection, page)
-                }
-            logger.info(f"JSON obj: {json_obj}" )
-            send_json_in_list(self, json_obj,200 )
-        except psycopg.Error as e:
-            logger.exception("Database error during GET /images-list" )
-            send_params(self,500,"Database error" )
-        return None
 
-    # ---------------
-    # DELETE image
-    # ---------------
-    def do_DELETE(self):
+    def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
-        match = re.fullmatch(r"/delete/(\d+)", parsed.path )
+        match = re.fullmatch(r"/delete/(\d+)", parsed.path)
         if not match:
-            logger.warning( f"DELETE {parsed.path} --> 404" )
-            send_params( self,404,"Invalid delete route" )
-            return None
+            logger.warning("DELETE %s -> 404", parsed.path)
+            send_params(self, 404, "Image not found")
+            return
+        image_id = int(match.group(1))
+        delete_image_file(self, image_id)
 
-        image_id = int( match.group(1) )
-        try:
-            with get_db_connection() as connection:
-                delete_file_name = (get_image_filename(connection,image_id) )
-                if not delete_file_name:
-                    send_params(self,404,f"Image not found ID:{image_id}" )
-                    return None
-                logger.info( f"DELETE file: {delete_file_name}" )
-                delete_file(delete_file_name )
-                logger.info( f"Remove file: {delete_file_name}" )
-                logger.info("DELETE image id={image_id}" )
-                filename_del = del_image( connection, image_id)
-        except ValueError as e:
-            logger.warning(e)
-            send_params( self,404, str(e) )
-            return None
-        except psycopg.Error as e:
-            logger.exception(f"Database error during DELETE: {e}" )
-            send_params( self,500,"Database error" )
-            return None
-        send_params( self,200,f"Image deleted ID: {image_id}", filename_del )
 
-# ---------------
-# Start Server
-# ---------------
-def main():
-    # Wait for PostgreSQL
+# Server
+def create_server() -> ThreadingHTTPServer:
+    try:
+        return ThreadingHTTPServer((HOST, APP_PORT), Handler )
+    except OSError as e:
+        logger.exception("Failed to start server on %s:%s",HOST, APP_PORT )
+        raise AppError(f"Failed to start server on {HOST}:{APP_PORT}" ) from e
+
+
+@validate_app_config
+def main() -> None:
     wait_for_database()
-    server = ThreadingHTTPServer((HOST, HOST_PORT), Handler )
-    logger.info( f"Python server started on http://localhost:{HOST_PORT}/" )
-    server.serve_forever()
-
+    server = create_server()
+    logger.info("Python server started on http://localhost:%s/",APP_PORT)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    finally:
+        server.server_close()
 
 if __name__ == "__main__":
     main()

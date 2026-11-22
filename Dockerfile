@@ -17,6 +17,7 @@ RUN addgroup -g ${GID} appuser && \
 # Application
 COPY app.py /app/app.py
 COPY backup_scheduler.py /app/backup_scheduler.py
+COPY install.sql /app/install.sql
 
 RUN mkdir -p /app/images /app/logs /app/backup && \
     chown -R appuser:appuser /app
