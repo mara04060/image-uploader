@@ -897,6 +897,7 @@ document.addEventListener('DOMContentLoaded', () => {
              * URL column
              * ================================================= */
 
+<<<<<<< HEAD
           const urlColumn =
                     document.createElement('div');
 
@@ -922,6 +923,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     urlColumn.appendChild(
                         urlLink
                     );
+=======
+            const urlColumn =
+                document.createElement('div');
+
+
+            urlColumn.className =
+                'file-col file-col-url';
+
+
+            urlColumn.textContent =
+                imageUrl;
+>>>>>>> dev
 
 
             /* =================================================
