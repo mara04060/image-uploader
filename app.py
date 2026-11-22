@@ -29,7 +29,17 @@ POSTGRES_DB = os.environ.get("POSTGRES_DB", "images_db")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "root_user")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "123")
 
-ALLOWED_EXTENSIONS = set(os.environ.get("ALLOWED_EXTENSIONS", "jpg, png, gif").lower().strip().split(","))
+def parse_allowed_extensions(value: str) -> set[str]:
+    return {
+        extension.strip().lower()
+        for extension in value.split(",")
+        if extension.strip()
+    }
+
+
+ALLOWED_EXTENSIONS = parse_allowed_extensions(
+    os.environ.get("ALLOWED_EXTENSIONS", "jpg,png,gif,jpeg")
+)
 MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE", 5)) * 1024 * 1024
 MAX_REQUEST_SIZE = MAX_FILE_SIZE * 10
 ITEMS_PER_PAGE = 10
@@ -373,8 +383,7 @@ def delete_file(file_name: str) -> None:
         file_path.unlink()
     except FileNotFoundError as e:
         logger.warning("File not found on disk: %s",safe_name)
-        # File is Deleted? And str delete in DB
-        # raise ImageFileDeleteError(f"Image file not found: '{safe_name}'") from e
+        raise ImageFileDeleteError(f"Image file not found: '{safe_name}'") from e
     except OSError as e:
         logger.exception("Failed to remove file '%s'",safe_name)
         raise ImageFileDeleteError( f"Failed to remove file '{safe_name}'" ) from e
@@ -512,24 +521,29 @@ def get_files_json(self,parsed) -> None:
         logger.exception("I/O error during GET /images-list" )
         send_params(self, 500, "Internal server error")
 
-def get_image_for_deletion(image_id: int) -> str:
+def delete_image_transaction(image_id: int) -> str:
     with get_db_connection() as connection:
-        return get_image_file_name(connection, image_id)
+        file_name = get_image_file_name(connection, image_id)
+        logger.info("Starting deletion of image ID=%s, file=%s",image_id, file_name)
 
-
-def delete_image_record(image_id: int) -> None:
-    with get_db_connection() as connection:
         deleted = delete_image(connection, image_id)
         if not deleted:
+            connection.rollback()
             raise ImageNotFoundError(f"Image not found: {image_id}")
+
+        try:
+            delete_file(file_name)
+        except ImageFileDeleteError:
+            connection.rollback()
+            raise
+
+        connection.commit()
+        return file_name
 
 
 def delete_image_file(self,image_id: int) -> None:
     try:
-        file_name = get_image_for_deletion(image_id)
-        logger.info("Starting deletion of image ID=%s, file=%s",image_id, file_name)
-        delete_file(file_name)
-        delete_image_record(image_id)
+        file_name = delete_image_transaction(image_id)
         send_params(self,200,f"Image deleted: {image_id}", file_name )
     except ImageNotFoundError as error:
         logger.info("Image deletion rejected: %s", error)
@@ -542,7 +556,7 @@ def delete_image_file(self,image_id: int) -> None:
         send_params(self, 500, "Database error")
     except ImageFileDeleteError:
         logger.exception("File deletion failed for image ID=%s",image_id)
-        send_params(self,500,"Image record deleted, but file removal failed")
+        send_params(self,500,"Failed to remove image file")
 
 
 # HTTP Handler
