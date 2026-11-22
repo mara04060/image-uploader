@@ -3,4 +3,6 @@
 venv
 .idea
 __pycache__/
-test/
+test/*
+!test/*.py
+!test/__init__.py

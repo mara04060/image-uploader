@@ -123,7 +123,6 @@ def validate_app_config(func):
         global MAX_FILE_SIZE, MAX_REQUEST_SIZE
 
         try:
-            APP_PORT = validate_positive_integer("APP_PORT", 8000, 65535)
             POSTGRES_PORT = validate_positive_integer("POSTGRES_PORT", 5432, 65535)
 
             for name in ("POSTGRES_SCHEME", "POSTGRES_DB", "POSTGRES_USER"):
