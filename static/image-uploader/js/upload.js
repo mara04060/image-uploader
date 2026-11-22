@@ -453,7 +453,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /*
      * ---------------------------------------------------------
-     * Initialize active tab
+     * Initialize active tab 1
      * ---------------------------------------------------------
      */
     updateTabStyles();
