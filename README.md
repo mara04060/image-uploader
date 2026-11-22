@@ -24,7 +24,6 @@ chmod 755 images logs backups
 # Application
 HOST_NGINX=localhost
 HOST_PORT=8080
-APP_PORT=8000
 
 # PostgreSQL
 POSTGRES_PORT=5432
@@ -200,7 +199,6 @@ docker compose logs -f nginx
 | --- | --- | --- |
 | `HOST_NGINX` | `localhost` | Ім'я хоста для доступу до вебінтерфейсу. |
 | `HOST_PORT` | `8080` | Порт NGINX на host-системі. |
-| `APP_PORT` | `8000` | Порт Python API всередині контейнера. |
 | `POSTGRES_PORT` | `5432` | Порт PostgreSQL усередині Docker-мережі. |
 | `POSTGRES_SCHEME` | `public` | Схема PostgreSQL для функцій роботи із зображеннями. |
 | `POSTGRES_DB` | `images_db` | Назва бази даних. |
