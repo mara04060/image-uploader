@@ -56,7 +56,6 @@ img {
 article>*+* {
     margin-top: 1em;
 }
-
 /* Inherit fonts for inputs and buttons */
 input,
 button,

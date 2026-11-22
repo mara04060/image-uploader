@@ -959,12 +959,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             deleteButton.className =
                 'delete-btn';
-
-
             deleteButton.dataset.id =
                 String(fileData.id);
-
-
             const deleteImage =
                 document.createElement('img');
 
